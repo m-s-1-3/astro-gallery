@@ -12,7 +12,7 @@ hinterher genau dort wieder, wo sie war.
 ## Einbinden
 
 ```
-npm i git+https://gitlab.com/zc-dev/astro-gallery.git#v1.0.0
+npm i git+https://github.com/m-s-1-3/astro-gallery.git#v1.0.0
 ```
 
 ```astro
@@ -34,6 +34,10 @@ const images: GalleryImage[] = fotos.map((f) => ({
 `npm ci` im Docker-Build nicht daran. Die Container bauen ohne SSH-Schlüssel
 und ohne Token; ein privates Repo bräuchte an jeder Stelle eines, auch in
 der CI. Geheim ist an einer Galerie nichts.
+
+Die Fassung steht am Tag, nicht an einem Zweig: `#v1.0.0` bleibt, bis jemand
+sie absichtlich hochzieht. Ein `#main` würde bei jedem `npm ci` etwas
+anderes holen, und ein Docker-Build, der gestern lief, liefe morgen nicht.
 
 Die Daten holt **jedes Projekt selbst** — aus dem Build, aus einem Bucket,
 aus einem CMS. Das Paket bekommt nur fertige Adressen.
