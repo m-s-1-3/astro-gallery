@@ -8,7 +8,10 @@
     "./Gallery.astro": "./src/Gallery.astro",
     "./types": "./src/types.ts"
   },
-  "files": ["src", "README.md"],
+  "files": [
+    "src",
+    "README.md"
+  ],
   "scripts": {
     "test": "tsx --test test/*.test.ts",
     "check:browser": "node scripts/check-browser.mjs"
@@ -22,5 +25,9 @@
     "puppeteer-core": "^24.0.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://gitlab.com/zc-dev/astro-gallery.git"
   }
 }
