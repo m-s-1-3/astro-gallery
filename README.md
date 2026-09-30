@@ -113,11 +113,20 @@ Pfeilknöpfe in voller Größe.
 
 `overflow: hidden` reicht nicht — das nimmt die Balken, nicht das Scrollen,
 auf iOS nicht einmal das. Der Body wird festgesetzt und auf seinem Versatz
-gehalten (`html.ag-held`, Versatz in `body.style.top`). Dazu
-`history.scrollRestoration = 'manual'`, solange ein Bild offen ist: sonst
-stellt der Browser beim `popstate` seine eigene Position wieder her — und
-die ist null, weil der Body beim Setzen des History-Eintrags schon
-festgesetzt war.
+gehalten (`html.ag-held`, Versatz in `body.style.top`).
+
+**`history.scrollRestoration` wird absichtlich nicht angefasst.** Es auf
+`manual` zu setzen, solange ein Bild offen ist, sah aus wie die Lösung dafür,
+dass der Browser beim Zurückgehen die Seite nach oben legt — und war ein
+Fehler, der teuer war: die Einstellung gehört dem **History-Eintrag** und
+überlebt den Reload. Wer mit offenem Bild neu lud, ließ den Eintrag für immer
+auf `manual`, und ab da sprang jeder weitere Reload dieser Seite nach ganz
+oben.
+
+Richtig ist stattdessen die **Reihenfolge**: der History-Eintrag wird
+gesetzt, **bevor** der Body festgesetzt wird. Dann speichert der Eintrag die
+echte Scrollposition; ein festgesetzter Body liest sich als null, und genau
+das hatte der Browser gelernt.
 
 ## Prüfen
 

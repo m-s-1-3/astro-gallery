@@ -120,17 +120,38 @@ test('the buttons do what the keys do', async () => {
 test('while a picture is open the page behind it is pinned', async () => {
   const g = await open();
   g.window.scrollY = 1234;
+  const mode = g.window.history.scrollRestoration;
   g.click('[data-ag-open]', 1);
   assert.ok(g.doc.documentElement.classList.contains('ag-held'));
   assert.equal(g.doc.body.style.top, '-1234px', 'pinned where it stood');
-  assert.equal(g.window.history.scrollRestoration, 'manual',
-    'the browser must not restore its own position on the way back');
+  // Never touched: it belongs to the history entry and survives a reload.
+  // Set to `manual` here, a visitor who reloaded with a picture open left
+  // that entry on manual for good, and every later reload jumped to the top.
+  assert.equal(g.window.history.scrollRestoration, mode,
+    'the scroll restoration mode is not ours to change');
 
   g.key('Escape');
   await new Promise((r) => setTimeout(r, 60));
   assert.equal(g.big.classList.contains('is-open'), false);
   assert.equal(g.doc.body.style.top, '');
-  assert.equal(g.window.history.scrollRestoration, 'auto');
+  assert.equal(g.window.history.scrollRestoration, mode, 'still untouched');
+});
+
+test('the history entry is pushed before the page is pinned', async () => {
+  // Otherwise the entry saves a scroll position of zero — the pinned body
+  // reads as top — and the browser puts the page there on the way back.
+  const g = await open();
+  g.window.scrollY = 900;
+  let topWhenPushed: string | null = null;
+  const push = g.window.history.pushState.bind(g.window.history);
+  g.window.history.pushState = ((...args: unknown[]) => {
+    topWhenPushed = g.doc.body.style.top || '';
+    return push(...(args as [unknown, string]));
+  }) as typeof g.window.history.pushState;
+
+  g.click('[data-ag-open]', 0);
+  assert.equal(topWhenPushed, '', 'the body was still in the flow');
+  assert.equal(g.doc.body.style.top, '-900px', 'and is pinned right after');
 });
 
 test('without the loop the ends are ends', async () => {

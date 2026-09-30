@@ -106,9 +106,8 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
    *  that does not exist and normalises afterwards; a second step in the
    *  middle of that would leave the track somewhere between the two. */
   let crossing = false;
-  /** Where the page stood, and what the browser was allowed to do about it. */
+  /** Where the page stood when the picture was opened. */
   let heldAt = 0;
-  let restoration: ScrollRestoration = 'auto';
   let pushed = false;
 
   const wake = (root: HTMLElement): Live => {
@@ -257,11 +256,19 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
    *  `overflow: hidden` is not enough: it takes the bars, not the scrolling,
    *  and on iOS not even that. The body is taken out of the flow at the
    *  offset it was at, and that offset has to be remembered — a fixed body
-   *  forgets and would come back at the top. */
+   *  forgets and would come back at the top.
+   *
+   *  `history.scrollRestoration` is deliberately NOT touched. Setting it to
+   *  `manual` while a picture was open looked like the fix for the browser
+   *  putting the page at the top on the way back, and it cost a day: the
+   *  setting belongs to the session history ENTRY and survives a reload. A
+   *  visitor who reloaded with a picture open left that entry on `manual`
+   *  for good, and from then on every reload of that page jumped to the top.
+   *  What the browser needed instead was a history entry that knows the real
+   *  scroll position — so the entry is pushed BEFORE the body is pinned, see
+   *  `open`. */
   const hold = () => {
     heldAt = window.scrollY;
-    restoration = history.scrollRestoration ?? 'auto';
-    try { history.scrollRestoration = 'manual'; } catch { /* older browsers */ }
     document.body.style.top = `-${heldAt}px`;
     document.documentElement.classList.add('ag-held');
   };
@@ -274,7 +281,6 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     const back = () => window.scrollTo({ top: heldAt, left: 0, behavior: 'instant' });
     back();
     requestAnimationFrame(back);
-    try { history.scrollRestoration = restoration; } catch { /* older browsers */ }
   };
 
   const open = (root: HTMLElement, i: number) => {
@@ -283,6 +289,12 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     live.index = clamp(i, 0, live.slides.length - 1);
     live.big.classList.add('is-open');
     live.big.setAttribute('aria-hidden', 'false');
+    // BEFORE pinning the body, and that order is the whole point: pushing a
+    // new entry makes the page's entry save the position it is at, and a
+    // pinned body reads as zero. Pinned first, the browser learnt »top« and
+    // put the page there on the way back. One history entry, so the back
+    // gesture on a phone closes the picture instead of leaving the site.
+    if (!pushed) { history.pushState({ agOpen: true }, ''); pushed = true; }
     hold();
     lazy();
     unzoom(false);
@@ -292,9 +304,6 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     measure();
     draw(0, false);
     requestAnimationFrame(() => { measure(); draw(0, false); });
-    // One history entry, so the back gesture on a phone closes the picture
-    // instead of leaving the site.
-    if (!pushed) { history.pushState({ agOpen: true }, ''); pushed = true; }
   };
 
   const shut = () => {
