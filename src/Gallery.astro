@@ -317,6 +317,13 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
   const close = () => { if (pushed) history.back(); else shut(); };
   window.addEventListener('popstate', () => { if (live) { pushed = false; shut(); } });
 
+  /** A page that is going away while a picture is open has to be let go of
+   *  first. The browser writes the scroll position into the history entry as
+   *  it leaves, and a pinned body stands at zero — so reloading with a
+   *  picture open came back at the top. Released here, it records the place
+   *  the visitor was actually at. */
+  window.addEventListener('pagehide', () => { if (live) release(); });
+
   // Nothing is bound up front: inside a `server:defer` island this script
   // runs long before the markup exists.
   document.addEventListener('click', (e) => {
