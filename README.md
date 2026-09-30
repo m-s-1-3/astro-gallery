@@ -12,7 +12,7 @@ hinterher genau dort wieder, wo sie war.
 ## Einbinden
 
 ```
-npm i git+ssh://git@<host>/<gruppe>/astro-gallery.git#v1.0.0
+npm i git+https://gitlab.com/zc-dev/astro-gallery.git#v1.0.0
 ```
 
 ```astro
@@ -29,6 +29,11 @@ const images: GalleryImage[] = fotos.map((f) => ({
   next: t('gallery.next'), close: t('gallery.close'),
 }} />
 ```
+
+**Über HTTPS, nicht über SSH, und das Repo öffentlich** — sonst kommt
+`npm ci` im Docker-Build nicht daran. Die Container bauen ohne SSH-Schlüssel
+und ohne Token; ein privates Repo bräuchte an jeder Stelle eines, auch in
+der CI. Geheim ist an einer Galerie nichts.
 
 Die Daten holt **jedes Projekt selbst** — aus dem Build, aus einem Bucket,
 aus einem CMS. Das Paket bekommt nur fertige Adressen.
