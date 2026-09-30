@@ -53,6 +53,7 @@ Alles hängt an CSS-Variablen auf `.ag`:
 | `--ag-radius` | `0` | Ecken |
 | `--ag-border` | `4px` | Rahmenstärke des großen Bildes |
 | `--ag-thumb` | `clamp(15rem, 32vw, 22rem)` | Höhe der Bilder im Streifen |
+| `--ag-thumb-border` | `0` | Rahmen um die Bilder im Streifen |
 | `--ag-on-dark` | `#fff` | Schrift und Rahmen auf dunklem Grund |
 
 ```css

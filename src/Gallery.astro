@@ -366,6 +366,7 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     --ag-border: 4px;
     --ag-gap: 0.6rem;
     --ag-thumb: clamp(15rem, 32vw, 22rem);
+    --ag-thumb-border: 0;
     --ag-on-dark: #fff;
   }
 
@@ -389,7 +390,7 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
   .ag-open {
     display: block;
     padding: 0;
-    border: 0;
+    border: var(--ag-thumb-border);
     background: none;
     line-height: 0;
     cursor: pointer;
@@ -397,6 +398,7 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     overflow: hidden;
   }
   .ag-open img { height: var(--ag-thumb); width: auto; object-fit: cover; display: block; }
+  .ag-open:hover img { filter: saturate(1.15); }
 
   /* The strip arrows are for a mouse. Where there is a finger they stay
      away — and that is decided by the POINTER, not by the width. A width can
