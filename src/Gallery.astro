@@ -26,14 +26,18 @@ interface Props {
   sizes?: string;
   /** Put on the root, so a site can style its own gallery. */
   class?: string;
+  /** Round and round: after the last picture comes the first again, and
+   *  before the first the last. Off by default — with six pictures the loop
+   *  is a nicety, with two it is a merry-go-round. */
+  loop?: boolean;
 }
 
-const { images, labels, sizes = '22rem', class: extra = '' } = Astro.props;
+const { images, labels, sizes = '22rem', class: extra = '', loop = false } = Astro.props;
 
 /** More than one gallery on a page is allowed, so nothing here is an id. */
 const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.open} ${i + 1}`;
 ---
-<div class:list={['ag', extra]} data-ag>
+<div class:list={['ag', extra]} data-ag data-ag-loop={loop ? '' : undefined}>
   <div class="ag-band">
     <button type="button" class="ag-step ag-step-prev" data-ag-step="-1" aria-label={labels.prev}>‹</button>
 
@@ -80,6 +84,7 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     slides: HTMLElement[];
     photos: HTMLImageElement[];
     at: HTMLElement;
+    loop: boolean;
     index: number;
     vw: number;
     scale: number;
@@ -93,6 +98,14 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
 
   /** The gallery whose picture is open, if any. There is at most one. */
   let live: Live | null = null;
+  /** Slides standing somewhere other than their own place, while a loop is
+   *  being crossed: the picture that is about to come round is put in the
+   *  neighbouring slot so the eye sees it arrive from the right side. */
+  const shift = new Map<number, number>();
+  /** True while the loop is being crossed. The animation borrows a position
+   *  that does not exist and normalises afterwards; a second step in the
+   *  middle of that would leave the track somewhere between the two. */
+  let crossing = false;
   /** Where the page stood, and what the browser was allowed to do about it. */
   let heldAt = 0;
   let restoration: ScrollRestoration = 'auto';
@@ -107,16 +120,20 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
       view: root.querySelector<HTMLElement>('[data-ag-view]')!,
       photos: slides.map((s) => s.querySelector('img')!),
       at: root.querySelector<HTMLElement>('[data-ag-at]')!,
+      loop: root.hasAttribute('data-ag-loop'),
       index: 0, vw: 0, scale: 1, tx: 0, ty: 0,
     };
   };
 
   const measure = () => { if (live) live.vw = live.view.clientWidth; };
 
-  /** Only the picture in the middle and its two neighbours are fetched. */
+  /** Only the picture in the middle and its two neighbours are fetched —
+   *  and with a loop, the neighbours of the last one are the first one. */
   const lazy = () => {
     if (!live) return;
-    for (let j = live.index - 1; j <= live.index + 1; j++) {
+    const n = live.slides.length;
+    for (const d of [0, 1, -1]) {
+      const j = live.loop ? (live.index + d + n) % n : live.index + d;
       const photo = live.photos[j];
       if (photo && !photo.src && photo.dataset.src) photo.src = photo.dataset.src;
     }
@@ -126,17 +143,33 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
    *  little, growing back to full size as they reach the middle. Per cent
    *  for the step and pixels for the drag: per cent avoids the sub-pixel
    *  drift that viewport units bring on a phone. */
+  /** One slide at position `v`, seen from `focus`. `v` is usually the
+   *  slide's own index; while a loop is crossed it is the borrowed place. */
+  const place = (i: number, v: number, focus: number, anim: boolean) => {
+    const slide = live!.slides[i]!;
+    const off = Math.min(1.2, Math.abs(v - focus));
+    slide.style.transition = anim ? `transform 0.3s ${EASE}, opacity 0.3s ease` : 'none';
+    slide.style.transform =
+      `translate3d(${(v - i) * 100}%, 0, 0) translate3d(0, ${16 * off}px, 0) scale(${1 - 0.16 * off})`;
+    slide.style.opacity = String(clamp(1 - 0.28 * off, 0, 1));
+  };
+
   const draw = (drag: number, anim: boolean) => {
     if (!live) return;
-    const { track, slides, index, vw } = live;
+    const { track, slides, index, vw, loop } = live;
+    const n = slides.length;
+    const focus = index + drag / (vw || 1);
     track.style.transition = anim ? `transform 0.3s ${EASE}` : 'none';
     track.style.transform = `translate3d(calc(${-index * 100}% + ${drag}px), 0, 0)`;
-    for (let i = 0; i < slides.length; i++) {
-      const off = Math.min(1.2, Math.abs(i - index - drag / (vw || 1)));
-      slides[i]!.style.transition = anim ? `transform 0.3s ${EASE}, opacity 0.3s ease` : 'none';
-      slides[i]!.style.transform = `translate3d(0, ${16 * off}px, 0) scale(${1 - 0.16 * off})`;
-      slides[i]!.style.opacity = String(clamp(1 - 0.28 * off, 0, 1));
+
+    // Dragged past an end with the loop on, the picture that would come
+    // round is already put in the empty slot, so the preview does not show
+    // a gap where the next picture belongs.
+    if (loop && n > 1) {
+      if (focus < 0) shift.set(n - 1, -1); else shift.delete(n - 1);
+      if (focus > n - 1) shift.set(0, n); else shift.delete(0);
     }
+    for (let i = 0; i < n; i++) place(i, shift.get(i) ?? i, focus, anim);
   };
 
   const zoom = (anim: boolean) => {
@@ -169,6 +202,54 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     live.at.textContent = String(live.index + 1);
     lazy();
     draw(0, anim);
+  };
+
+  /** Crossing the loop, with the same movement as any other change: the
+   *  track glides to a position one past the end, where the picture that is
+   *  coming round has been put; then the real position is restored without
+   *  anything visible happening. Jumping the track back across every slide
+   *  instead would read as a rewind, not as a step. */
+  const cross = (dir: number, fromDrag: number) => {
+    if (!live) return;
+    const n = live.slides.length;
+    if (n < 2) { draw(0, true); return; }
+    const target = dir > 0 ? 0 : n - 1;
+    const borrowed = dir > 0 ? n : -1;
+    crossing = true;
+    unzoom(false);
+    shift.clear();
+    shift.set(target, borrowed);
+
+    const from = live.index + fromDrag / (live.vw || 1);
+    live.track.style.transition = 'none';
+    live.track.style.transform = `translate3d(calc(${-live.index * 100}% + ${fromDrag}px), 0, 0)`;
+    for (let i = 0; i < n; i++) place(i, shift.get(i) ?? i, from, false);
+
+    requestAnimationFrame(() => {
+      if (!live) return;
+      live.track.style.transition = `transform 0.3s ${EASE}`;
+      live.track.style.transform = `translate3d(${-borrowed * 100}%, 0, 0)`;
+      for (let i = 0; i < n; i++) place(i, shift.get(i) ?? i, borrowed, true);
+    });
+
+    window.setTimeout(() => {
+      crossing = false;
+      if (!live) { shift.clear(); return; }
+      live.index = target;
+      live.at.textContent = String(target + 1);
+      shift.clear();
+      lazy();
+      draw(0, false);
+    }, 330);
+  };
+
+  /** One picture forward or back. Everything that leafs goes through here —
+   *  the buttons, the arrow keys and the end of a swipe. */
+  const step = (dir: number, fromDrag = 0) => {
+    if (!live || crossing) return;
+    const next = live.index + dir;
+    if (live.loop && (next < 0 || next >= live.slides.length)) cross(dir, fromDrag);
+    else goTo(next, true);
   };
 
   /** Holding the page still, and giving it back where it stood.
@@ -221,6 +302,7 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     live.big.classList.remove('is-open');
     live.big.setAttribute('aria-hidden', 'true');
     release();
+    shift.clear();
     live = null;
   };
   const close = () => { if (pushed) history.back(); else shut(); };
@@ -238,13 +320,16 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
       return;
     }
 
-    const step = target.closest<HTMLElement>('[data-ag-step]');
-    if (step) {
-      const strip = step.closest('[data-ag]')?.querySelector<HTMLElement>('[data-ag-strip]');
+    // Not `step`: that is the function that leafs through the enlarged
+    // picture, and a local of the same name shadowed it here. The buttons
+    // threw instead of turning the page, and nothing said so.
+    const nudge = target.closest<HTMLElement>('[data-ag-step]');
+    if (nudge) {
+      const strip = nudge.closest('[data-ag]')?.querySelector<HTMLElement>('[data-ag-strip]');
       const first = strip?.querySelector<HTMLElement>('.ag-frame');
       if (strip) {
         const width = first ? first.getBoundingClientRect().width + 16 : 320;
-        strip.scrollBy({ left: (Number(step.dataset.agStep) || 1) * width, behavior: 'smooth' });
+        strip.scrollBy({ left: (Number(nudge.dataset.agStep) || 1) * width, behavior: 'smooth' });
       }
       return;
     }
@@ -252,14 +337,14 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     if (!live) return;
     if (target.closest('[data-ag-close]')) { close(); return; }
     const go = target.closest<HTMLElement>('[data-ag-go]');
-    if (go) goTo(live.index + (Number(go.dataset.agGo) || 1), true);
+    if (go) step(Number(go.dataset.agGo) || 1);
   });
 
   document.addEventListener('keydown', (e) => {
     if (!live) return;
     if (e.key === 'Escape') close();
-    else if (e.key === 'ArrowLeft') goTo(live.index - 1, true);
-    else if (e.key === 'ArrowRight') goTo(live.index + 1, true);
+    else if (e.key === 'ArrowLeft') step(-1);
+    else if (e.key === 'ArrowRight') step(1);
     else return;
     e.preventDefault();
   });
@@ -308,8 +393,11 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
       zoom(false);
     } else if (dragging) {
       let d = e.clientX - dragSX;
-      // The first and the last resist, so the end of the row is felt.
-      if ((live.index === 0 && d > 0) || (live.index === live.slides.length - 1 && d < 0)) d *= 0.35;
+      // Without the loop the first and the last resist, so the end of the
+      // row is felt. With it there is no end to feel.
+      if (!live.loop && ((live.index === 0 && d > 0) || (live.index === live.slides.length - 1 && d < 0))) {
+        d *= 0.35;
+      }
       drag = d;
       draw(drag, false);
     }
@@ -324,8 +412,10 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
       else if (dragging) {
         dragging = false;
         const threshold = Math.min(90, (live.vw || live.view.clientWidth) * 0.16);
-        if (drag <= -threshold) goTo(live.index + 1, true);
-        else if (drag >= threshold) goTo(live.index - 1, true);
+        // The offset travels with it: a loop crossed by a swipe starts from
+        // where the finger let go, not from the middle.
+        if (drag <= -threshold) step(1, drag);
+        else if (drag >= threshold) step(-1, drag);
         else draw(0, true);
         drag = 0;
       } else {

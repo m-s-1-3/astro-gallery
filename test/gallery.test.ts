@@ -41,7 +41,7 @@ test('the stylesheet is global and reaches outside the component', () => {
 });
 
 /** The component's markup, as a page with four pictures. */
-async function open(count = 4) {
+async function open(count = 4, loop = false) {
   const js = (await transform(source, { loader: 'ts' })).code;
   const frames = Array.from({ length: count }, (_, i) =>
     `<li class="ag-frame"><button class="ag-open" data-ag-open="${i}">`
@@ -50,7 +50,7 @@ async function open(count = 4) {
     `<div class="ag-slide"><img class="ag-photo" data-src="big-${i}.webp" alt="Bild ${i + 1}"></div>`).join('');
 
   const dom = new JSDOM(
-    `<!doctype html><html><body><div class="ag" data-ag>
+    `<!doctype html><html><body><div class="ag" data-ag ${loop ? 'data-ag-loop' : ''}>
        <div class="ag-band">
          <button class="ag-step" data-ag-step="-1">‹</button>
          <ul class="ag-strip" data-ag-strip>${frames}</ul>
@@ -131,6 +131,55 @@ test('while a picture is open the page behind it is pinned', async () => {
   assert.equal(g.big.classList.contains('is-open'), false);
   assert.equal(g.doc.body.style.top, '');
   assert.equal(g.window.history.scrollRestoration, 'auto');
+});
+
+test('without the loop the ends are ends', async () => {
+  const g = await open(4);
+  g.click('[data-ag-open]', 0);
+  g.key('ArrowLeft');
+  assert.equal(g.at(), '1', 'the first has nothing before it');
+  for (let i = 0; i < 6; i++) g.key('ArrowRight');
+  assert.equal(g.at(), '4', 'and the last nothing after it');
+});
+
+test('with the loop, after the last comes the first', async () => {
+  const g = await open(4, true);
+  g.click('[data-ag-open]', 3);
+  assert.equal(g.at(), '4');
+  g.key('ArrowRight');
+  // The crossing borrows a position that does not exist and normalises
+  // afterwards, so the counter arrives with the animation.
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(g.at(), '1', 'round it goes');
+  g.key('ArrowLeft');
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(g.at(), '4', 'and back the other way');
+});
+
+test('a crossing cannot be interrupted halfway', async () => {
+  // Two steps inside the 330 ms would leave the track between two places.
+  const g = await open(4, true);
+  g.click('[data-ag-open]', 3);
+  g.key('ArrowRight');
+  g.key('ArrowRight');
+  g.key('ArrowRight');
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(g.at(), '1', 'one crossing, not three');
+});
+
+test('the loop fetches the picture that is coming round', async () => {
+  const g = await open(4, true);
+  g.click('[data-ag-open]', 3);
+  // Standing on the last one, the neighbours are the third and the FIRST.
+  assert.deepEqual(g.srcs().map((s) => s !== null), [true, false, true, true]);
+});
+
+test('a single picture has nowhere to loop to', async () => {
+  const g = await open(1, true);
+  g.click('[data-ag-open]', 0);
+  g.key('ArrowRight');
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(g.at(), '1');
 });
 
 test('a second gallery on the same page opens on its own pictures', async () => {

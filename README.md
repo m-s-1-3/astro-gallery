@@ -24,11 +24,19 @@ const images: GalleryImage[] = fotos.map((f) => ({
   thumb: klein(f), full: gross(f), alt: f.alt, srcset: satz(f),
 }));
 ---
-<Gallery images={images} labels={{
+<Gallery images={images} loop labels={{
   open: t('gallery.open'), prev: t('gallery.prev'),
   next: t('gallery.next'), close: t('gallery.close'),
 }} />
 ```
+
+| Eigenschaft | Vorgabe | wofür |
+|---|---|---|
+| `images` | — | die Bilder, `{thumb, full, alt, srcset?, width?, height?}` |
+| `labels` | — | `open`, `prev`, `next`, `close` |
+| `sizes` | `22rem` | `sizes` der Bilder im Streifen |
+| `loop` | `false` | endlos: nach dem letzten kommt wieder das erste |
+| `class` | — | zusätzliche Klasse auf `.ag` |
 
 **Über HTTPS, nicht über SSH, und das Repo öffentlich** — sonst kommt
 `npm ci` im Docker-Build nicht daran. Die Container bauen ohne SSH-Schlüssel
@@ -62,6 +70,25 @@ Alles hängt an CSS-Variablen auf `.ag`:
 
 Die Knöpfe erben `font` und `color` von der Seite — Schrift stellt das Paket
 nicht ein.
+
+## Endlos blättern
+
+`loop` macht aus der Reihe einen Ring: nach dem letzten Bild kommt wieder das
+erste, vor dem ersten das letzte. Aus gutem Grund **nicht** die Vorgabe — bei
+zwanzig Bildern ist das bequem, bei zweien ein Karussell, und ohne Ende weiß
+niemand mehr, dass er alles gesehen hat.
+
+Der Umlauf sieht aus wie jeder andere Wechsel. Das Bild, das herumkommt,
+wird vorübergehend in den Nachbarplatz gestellt, der Track gleitet auf diese
+**geliehene** Position, und danach wird ohne sichtbare Änderung auf die
+echte normalisiert. Ein Sprung über alle Bilder zurück läse sich als
+Zurückspulen, nicht als ein Schritt. Solange das läuft (330 ms), nimmt kein
+weiterer Schritt an — zwei Umläufe übereinander ließen den Track zwischen
+zwei Plätzen stehen.
+
+Beim Ziehen über das Ende hinaus steht das umgewickelte Bild schon in der
+Vorschau, sonst zöge man gegen eine Lücke. Und der Widerstand an den Enden
+entfällt: wo kein Ende ist, ist nichts zu spüren.
 
 ## Drei Dinge, die hier absichtlich so sind
 
@@ -107,6 +134,6 @@ lokales Chrome (`CHROME=`).
 
 ## Benutzt von
 
-- `piscinaidro` — Bilder aus PocketBase, in einer `server:defer`-Insel
+- `piscinaidro` — Bilder aus PocketBase, in einer `server:defer`-Insel, `loop`
 - `bibioneseafun` — Bilder aus dem Build *(noch umzustellen)*
 - `fewovogelschar-astro` — *(noch umzustellen)*
