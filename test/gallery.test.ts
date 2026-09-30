@@ -137,6 +137,19 @@ test('while a picture is open the page behind it is pinned', async () => {
   assert.equal(g.window.history.scrollRestoration, mode, 'still untouched');
 });
 
+test('a page left with a picture open is let go of first', async () => {
+  // The browser writes the scroll position into the history entry as it
+  // leaves, and a pinned body stands at zero: reloading with a picture open
+  // came back at the top.
+  const g = await open();
+  g.window.scrollY = 700;
+  g.click('[data-ag-open]', 1);
+  assert.equal(g.doc.body.style.top, '-700px');
+  g.window.dispatchEvent(new g.window.Event('pagehide'));
+  assert.equal(g.doc.body.style.top, '', 'released on the way out');
+  assert.equal(g.doc.documentElement.classList.contains('ag-held'), false);
+});
+
 test('the history entry is pushed before the page is pinned', async () => {
   // Otherwise the entry saves a scroll position of zero — the pinned body
   // reads as top — and the browser puts the page there on the way back.

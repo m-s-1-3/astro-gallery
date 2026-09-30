@@ -128,6 +128,10 @@ gesetzt, **bevor** der Body festgesetzt wird. Dann speichert der Eintrag die
 echte Scrollposition; ein festgesetzter Body liest sich als null, und genau
 das hatte der Browser gelernt.
 
+Aus demselben Grund wird die Seite bei `pagehide` losgelassen: wer mit
+offenem Bild neu lädt, soll dort wieder herauskommen, wo er war, und nicht
+an der Stelle, die der festgesetzte Body vorgetäuscht hat.
+
 ## Prüfen
 
 ```
