@@ -1,0 +1,521 @@
+---
+/** Filmstrip and lightbox, in one piece.
+ *
+ *  Click a picture, leaf through with the arrows, the arrow keys or a swipe,
+ *  pinch to zoom, escape or the back button to leave.
+ *
+ *  THE SLIDES ARE RENDERED HERE, IN THE TEMPLATE. That is not a detail. A
+ *  version of this built its slides at runtime and shipped broken: Astro
+ *  scopes component CSS by stamping a `data-astro-…` attribute on the
+ *  elements it finds in the template and rewriting every selector to match
+ *  it, so elements made later by script are reached by nothing. The frame
+ *  looked right and the pictures were a row of broken icons.
+ *
+ *  The script, on the other hand, must NOT assume the markup is there when
+ *  it runs. Astro hoists it into the page bundle, and a gallery inside a
+ *  `server:defer` island arrives afterwards. So it binds nothing up front:
+ *  one delegated listener on the document, and each gallery is set up the
+ *  first time someone touches it.
+ */
+import type { GalleryImage, GalleryLabels } from './types.ts';
+
+interface Props {
+  images: GalleryImage[];
+  labels: GalleryLabels;
+  /** `sizes` for the strip thumbnails. */
+  sizes?: string;
+  /** Put on the root, so a site can style its own gallery. */
+  class?: string;
+}
+
+const { images, labels, sizes = '22rem', class: extra = '' } = Astro.props;
+
+/** More than one gallery on a page is allowed, so nothing here is an id. */
+const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.open} ${i + 1}`;
+---
+<div class:list={['ag', extra]} data-ag>
+  <div class="ag-band">
+    <button type="button" class="ag-step ag-step-prev" data-ag-step="-1" aria-label={labels.prev}>‹</button>
+
+    <ul class="ag-strip" data-ag-strip>
+      {images.map((image, i) => (
+        <li class="ag-frame">
+          <button type="button" class="ag-open" data-ag-open={i} aria-label={labels.open}>
+            <img src={image.thumb} srcset={image.srcset} sizes={sizes} alt={words(image, i)}
+              width={image.width} height={image.height} loading="lazy" decoding="async" />
+          </button>
+        </li>
+      ))}
+    </ul>
+
+    <button type="button" class="ag-step ag-step-next" data-ag-step="1" aria-label={labels.next}>›</button>
+  </div>
+
+  <div class="ag-big" data-ag-big aria-hidden="true">
+    <button type="button" class="ag-btn ag-close" data-ag-close aria-label={labels.close}>✕</button>
+    <button type="button" class="ag-btn ag-prev" data-ag-go="-1" aria-label={labels.prev}>‹</button>
+
+    <div class="ag-view" data-ag-view>
+      <div class="ag-track" data-ag-track>
+        {images.map((image, i) => (
+          <div class="ag-slide">
+            <img class="ag-photo" data-src={image.full} alt={words(image, i)} draggable="false" />
+          </div>
+        ))}
+      </div>
+    </div>
+
+    <button type="button" class="ag-btn ag-next" data-ag-go="1" aria-label={labels.next}>›</button>
+    <p class="ag-count"><span data-ag-at>1</span> / <span>{images.length}</span></p>
+  </div>
+</div>
+
+<script>
+  /** Everything one open gallery needs to remember. */
+  interface Live {
+    root: HTMLElement;
+    big: HTMLElement;
+    view: HTMLElement;
+    track: HTMLElement;
+    slides: HTMLElement[];
+    photos: HTMLImageElement[];
+    at: HTMLElement;
+    index: number;
+    vw: number;
+    scale: number;
+    tx: number;
+    ty: number;
+  }
+
+  const EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
+  const MAX_ZOOM = 4;
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+  /** The gallery whose picture is open, if any. There is at most one. */
+  let live: Live | null = null;
+  /** Where the page stood, and what the browser was allowed to do about it. */
+  let heldAt = 0;
+  let restoration: ScrollRestoration = 'auto';
+  let pushed = false;
+
+  const wake = (root: HTMLElement): Live => {
+    const big = root.querySelector<HTMLElement>('[data-ag-big]')!;
+    const track = root.querySelector<HTMLElement>('[data-ag-track]')!;
+    const slides = [...track.querySelectorAll<HTMLElement>('.ag-slide')];
+    return {
+      root, big, track, slides,
+      view: root.querySelector<HTMLElement>('[data-ag-view]')!,
+      photos: slides.map((s) => s.querySelector('img')!),
+      at: root.querySelector<HTMLElement>('[data-ag-at]')!,
+      index: 0, vw: 0, scale: 1, tx: 0, ty: 0,
+    };
+  };
+
+  const measure = () => { if (live) live.vw = live.view.clientWidth; };
+
+  /** Only the picture in the middle and its two neighbours are fetched. */
+  const lazy = () => {
+    if (!live) return;
+    for (let j = live.index - 1; j <= live.index + 1; j++) {
+      const photo = live.photos[j];
+      if (photo && !photo.src && photo.dataset.src) photo.src = photo.dataset.src;
+    }
+  };
+
+  /** The track at a drag offset in pixels. Neighbours shrink and sink a
+   *  little, growing back to full size as they reach the middle. Per cent
+   *  for the step and pixels for the drag: per cent avoids the sub-pixel
+   *  drift that viewport units bring on a phone. */
+  const draw = (drag: number, anim: boolean) => {
+    if (!live) return;
+    const { track, slides, index, vw } = live;
+    track.style.transition = anim ? `transform 0.3s ${EASE}` : 'none';
+    track.style.transform = `translate3d(calc(${-index * 100}% + ${drag}px), 0, 0)`;
+    for (let i = 0; i < slides.length; i++) {
+      const off = Math.min(1.2, Math.abs(i - index - drag / (vw || 1)));
+      slides[i]!.style.transition = anim ? `transform 0.3s ${EASE}, opacity 0.3s ease` : 'none';
+      slides[i]!.style.transform = `translate3d(0, ${16 * off}px, 0) scale(${1 - 0.16 * off})`;
+      slides[i]!.style.opacity = String(clamp(1 - 0.28 * off, 0, 1));
+    }
+  };
+
+  const zoom = (anim: boolean) => {
+    if (!live) return;
+    const photo = live.photos[live.index];
+    if (!photo) return;
+    photo.style.transition = anim ? 'transform 0.25s ease' : 'none';
+    photo.style.transform = `translate(${live.tx}px, ${live.ty}px) scale(${live.scale})`;
+  };
+  const unzoom = (anim: boolean) => {
+    if (!live) return;
+    live.scale = 1; live.tx = 0; live.ty = 0;
+    zoom(anim);
+  };
+  /** A zoomed picture stays inside the frame — no empty margins. */
+  const inside = () => {
+    if (!live) return;
+    const photo = live.photos[live.index];
+    if (!photo) return;
+    const maxX = Math.max(0, (photo.clientWidth * live.scale - live.view.clientWidth) / 2);
+    const maxY = Math.max(0, (photo.clientHeight * live.scale - live.view.clientHeight) / 2);
+    live.tx = clamp(live.tx, -maxX, maxX);
+    live.ty = clamp(live.ty, -maxY, maxY);
+  };
+
+  const goTo = (i: number, anim: boolean) => {
+    if (!live) return;
+    const next = clamp(i, 0, live.slides.length - 1);
+    if (next !== live.index) { unzoom(false); live.index = next; }
+    live.at.textContent = String(live.index + 1);
+    lazy();
+    draw(0, anim);
+  };
+
+  /** Holding the page still, and giving it back where it stood.
+   *
+   *  `overflow: hidden` is not enough: it takes the bars, not the scrolling,
+   *  and on iOS not even that. The body is taken out of the flow at the
+   *  offset it was at, and that offset has to be remembered — a fixed body
+   *  forgets and would come back at the top. */
+  const hold = () => {
+    heldAt = window.scrollY;
+    restoration = history.scrollRestoration ?? 'auto';
+    try { history.scrollRestoration = 'manual'; } catch { /* older browsers */ }
+    document.body.style.top = `-${heldAt}px`;
+    document.documentElement.classList.add('ag-held');
+  };
+  const release = () => {
+    document.documentElement.classList.remove('ag-held');
+    document.body.style.top = '';
+    // `instant`, because a site may set `scroll-behavior: smooth` and
+    // closing a picture would otherwise be a second of scenery flying past
+    // on the way back to where one already was.
+    const back = () => window.scrollTo({ top: heldAt, left: 0, behavior: 'instant' });
+    back();
+    requestAnimationFrame(back);
+    try { history.scrollRestoration = restoration; } catch { /* older browsers */ }
+  };
+
+  const open = (root: HTMLElement, i: number) => {
+    live = wake(root);
+    if (!live.slides.length) { live = null; return; }
+    live.index = clamp(i, 0, live.slides.length - 1);
+    live.big.classList.add('is-open');
+    live.big.setAttribute('aria-hidden', 'false');
+    hold();
+    lazy();
+    unzoom(false);
+    live.at.textContent = String(live.index + 1);
+    // Measured only once it is visible and the body is pinned: hidden, the
+    // width is zero and every slide would sit on top of the first.
+    measure();
+    draw(0, false);
+    requestAnimationFrame(() => { measure(); draw(0, false); });
+    // One history entry, so the back gesture on a phone closes the picture
+    // instead of leaving the site.
+    if (!pushed) { history.pushState({ agOpen: true }, ''); pushed = true; }
+  };
+
+  const shut = () => {
+    if (!live) return;
+    live.big.classList.remove('is-open');
+    live.big.setAttribute('aria-hidden', 'true');
+    release();
+    live = null;
+  };
+  const close = () => { if (pushed) history.back(); else shut(); };
+  window.addEventListener('popstate', () => { if (live) { pushed = false; shut(); } });
+
+  // Nothing is bound up front: inside a `server:defer` island this script
+  // runs long before the markup exists.
+  document.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+
+    const opener = target.closest<HTMLElement>('[data-ag-open]');
+    if (opener) {
+      const root = opener.closest<HTMLElement>('[data-ag]');
+      if (root) open(root, Number(opener.dataset.agOpen) || 0);
+      return;
+    }
+
+    const step = target.closest<HTMLElement>('[data-ag-step]');
+    if (step) {
+      const strip = step.closest('[data-ag]')?.querySelector<HTMLElement>('[data-ag-strip]');
+      const first = strip?.querySelector<HTMLElement>('.ag-frame');
+      if (strip) {
+        const width = first ? first.getBoundingClientRect().width + 16 : 320;
+        strip.scrollBy({ left: (Number(step.dataset.agStep) || 1) * width, behavior: 'smooth' });
+      }
+      return;
+    }
+
+    if (!live) return;
+    if (target.closest('[data-ag-close]')) { close(); return; }
+    const go = target.closest<HTMLElement>('[data-ag-go]');
+    if (go) goTo(live.index + (Number(go.dataset.agGo) || 1), true);
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (!live) return;
+    if (e.key === 'Escape') close();
+    else if (e.key === 'ArrowLeft') goTo(live.index - 1, true);
+    else if (e.key === 'ArrowRight') goTo(live.index + 1, true);
+    else return;
+    e.preventDefault();
+  });
+  window.addEventListener('resize', () => { if (live) { measure(); draw(0, false); } });
+
+  // Gestures: swipe with one finger, pinch with two, pan while zoomed,
+  // double tap to zoom, a tap beside the picture closes.
+  const pointers = new Map<number, { x: number; y: number }>();
+  let startDist = 0, startScale = 1;
+  let panSX = 0, panSY = 0, panTX = 0, panTY = 0;
+  let dragSX = 0, drag = 0, dragging = false;
+  let downX = 0, downY = 0, lastTap = 0;
+  let downTarget: EventTarget | null = null;
+  const twoDist = () => {
+    const p = [...pointers.values()];
+    return Math.hypot(p[0]!.x - p[1]!.x, p[0]!.y - p[1]!.y);
+  };
+  const onView = (e: Event) => live && (e.target as HTMLElement).closest('[data-ag-view]');
+
+  document.addEventListener('pointerdown', (e) => {
+    if (!onView(e)) return;
+    live!.view.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      startDist = twoDist(); startScale = live!.scale; dragging = false;
+    } else {
+      downX = e.clientX; downY = e.clientY; downTarget = e.target;
+      if (live!.scale > 1) { panSX = e.clientX; panSY = e.clientY; panTX = live!.tx; panTY = live!.ty; }
+      else { dragSX = e.clientX; drag = 0; dragging = true; }
+    }
+  });
+
+  document.addEventListener('pointermove', (e) => {
+    if (!live || !pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      if (startDist > 0) {
+        live.scale = clamp(startScale * (twoDist() / startDist), 1, MAX_ZOOM);
+        inside();
+        zoom(false);
+      }
+    } else if (live.scale > 1) {
+      live.tx = panTX + (e.clientX - panSX);
+      live.ty = panTY + (e.clientY - panSY);
+      inside();
+      zoom(false);
+    } else if (dragging) {
+      let d = e.clientX - dragSX;
+      // The first and the last resist, so the end of the row is felt.
+      if ((live.index === 0 && d > 0) || (live.index === live.slides.length - 1 && d < 0)) d *= 0.35;
+      drag = d;
+      draw(drag, false);
+    }
+  });
+
+  const endPointer = (e: PointerEvent) => {
+    if (!live || !pointers.has(e.pointerId)) return;
+    const moved = Math.hypot(e.clientX - downX, e.clientY - downY);
+    pointers.delete(e.pointerId);
+    if (pointers.size === 0) {
+      if (live.scale > 1) { inside(); zoom(true); }
+      else if (dragging) {
+        dragging = false;
+        const threshold = Math.min(90, (live.vw || live.view.clientWidth) * 0.16);
+        if (drag <= -threshold) goTo(live.index + 1, true);
+        else if (drag >= threshold) goTo(live.index - 1, true);
+        else draw(0, true);
+        drag = 0;
+      } else {
+        unzoom(true);
+      }
+      if (moved < 10) {
+        const onPhoto = downTarget instanceof Element && downTarget.classList.contains('ag-photo');
+        const now = Date.now();
+        if (onPhoto) {
+          if (now - lastTap < 300) {
+            if (live.scale > 1) unzoom(true);
+            else { live.scale = 2.5; live.tx = 0; live.ty = 0; zoom(true); }
+            lastTap = 0;
+          } else lastTap = now;
+        } else {
+          close();
+        }
+      }
+    } else if (pointers.size === 1 && live.scale > 1) {
+      const p = [...pointers.values()][0]!;
+      panSX = p.x; panSY = p.y; panTX = live.tx; panTY = live.ty;
+    }
+  };
+  document.addEventListener('pointerup', endPointer);
+  document.addEventListener('pointercancel', endPointer);
+</script>
+
+<style is:global>
+  /* GLOBAL, and every selector starts at `.ag`. The stylesheet has to reach
+     the page as well as the inside of a server island, and `.ag-held` is put
+     on <html>, which no component scope covers. */
+
+  .ag {
+    /* What a site is meant to set. Defaults are deliberately plain. */
+    --ag-accent: #ff4d0d;
+    --ag-backdrop: rgb(12 12 13 / 0.96);
+    --ag-radius: 0;
+    --ag-border: 4px;
+    --ag-gap: 0.6rem;
+    --ag-thumb: clamp(15rem, 32vw, 22rem);
+    --ag-on-dark: #fff;
+  }
+
+  .ag-band { position: relative; }
+  .ag-strip {
+    display: flex;
+    gap: var(--ag-gap);
+    margin: 0;
+    padding: 1.5rem 0 2rem;
+    list-style: none;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    /* The ends dissolve into the background instead of cutting a photo in
+       half with a hard edge. */
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 1.5rem, #000 calc(100% - 1.5rem), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 1.5rem, #000 calc(100% - 1.5rem), transparent 100%);
+  }
+  .ag-strip::-webkit-scrollbar { display: none; }
+  .ag-frame { flex: 0 0 auto; scroll-snap-align: center; }
+  .ag-open {
+    display: block;
+    padding: 0;
+    border: 0;
+    background: none;
+    line-height: 0;
+    cursor: pointer;
+    border-radius: var(--ag-radius);
+    overflow: hidden;
+  }
+  .ag-open img { height: var(--ag-thumb); width: auto; object-fit: cover; display: block; }
+
+  /* The strip arrows are for a mouse. Where there is a finger they stay
+     away — and that is decided by the POINTER, not by the width. A width can
+     be reported wrong, and was: in device emulation the page was laid out at
+     desk width inside a phone-sized window, the media query did not match,
+     and full-size arrows stood on a phone screen. */
+  .ag-step { display: none; }
+  @media (min-width: 60rem) and (pointer: fine) {
+    .ag-band {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: var(--ag-gap);
+    }
+    .ag-strip { grid-column: 2; }
+    .ag-step {
+      display: grid;
+      place-items: center;
+      width: 52px; height: 52px;
+      padding: 0 0 0.35rem;
+      border: 3px solid currentColor;
+      border-radius: var(--ag-radius);
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      font-size: 2.4rem;
+      line-height: 1;
+      cursor: pointer;
+      transition: transform 0.1s ease, background 0.15s ease, color 0.15s ease;
+    }
+    .ag-step:hover { background: var(--ag-accent); border-color: var(--ag-accent); color: var(--ag-on-dark); }
+    .ag-step:active { transform: translate(3px, 3px); }
+  }
+
+  /* ── The enlarged picture ─────────────────────────────────────────────── */
+
+  .ag-big {
+    position: fixed;
+    inset: 0 0 auto;
+    height: 100vh;
+    height: 100dvh;
+    z-index: 100;
+    display: none;
+    background: var(--ag-backdrop);
+  }
+  .ag-big.is-open { display: block; }
+  /* The page behind stands still. Put on <html> by the script, together with
+     an offset in `body.style.top`. */
+  html.ag-held, html.ag-held body { overflow: hidden; overscroll-behavior: none; }
+  html.ag-held body { position: fixed; left: 0; right: 0; width: 100%; }
+
+  .ag-view { position: absolute; inset: 0; overflow: hidden; touch-action: none; z-index: 1; }
+  .ag-track { display: flex; height: 100%; will-change: transform; }
+  .ag-slide {
+    flex: 0 0 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: clamp(1rem, 4vw, 3rem);
+    will-change: transform, opacity;
+  }
+  .ag-photo {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    border: var(--ag-border) solid var(--ag-accent);
+    border-radius: var(--ag-radius);
+    user-select: none;
+    -webkit-user-drag: none;
+    transform-origin: center center;
+  }
+  .ag-btn {
+    position: absolute;
+    z-index: 3;
+    display: grid;
+    place-items: center;
+    border: 3px solid var(--ag-on-dark);
+    border-radius: var(--ag-radius);
+    background: transparent;
+    color: var(--ag-on-dark);
+    font: inherit;
+    line-height: 1;
+    cursor: pointer;
+    transition: transform 0.1s ease, background 0.15s ease;
+  }
+  .ag-btn:hover { background: var(--ag-accent); border-color: var(--ag-accent); }
+  .ag-btn:active { transform: translate(3px, 3px); }
+  .ag-close { top: 1rem; right: 1rem; width: 52px; height: 52px; font-size: 1.5rem; }
+  .ag-prev, .ag-next {
+    top: 50%; margin-top: -29px;
+    width: 58px; height: 58px; font-size: 2.6rem; padding-bottom: 0.4rem;
+  }
+  .ag-prev { left: 1rem; }
+  .ag-next { right: 1rem; }
+  .ag-count {
+    position: absolute;
+    z-index: 3;
+    bottom: 1.1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    margin: 0;
+    padding: 0.3rem 1rem;
+    border-radius: var(--ag-radius);
+    background: var(--ag-accent);
+    color: var(--ag-on-dark);
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Where there is a finger, swiping is the gesture and two buttons sitting
+     on the picture are in the way of it. */
+  @media (pointer: coarse), (max-width: 40rem) {
+    .ag-prev, .ag-next { display: none; }
+    .ag-close { width: 42px; height: 42px; font-size: 1.2rem; border-width: 2px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ag-track, .ag-slide, .ag-photo { transition: none !important; }
+  }
+</style>
