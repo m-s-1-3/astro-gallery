@@ -1,15 +1,14 @@
 # @ms/astro-gallery
 
-Filmstreifen und Lightbox für Astro-Seiten. **Eine** Fassung für alle
-Projekte, statt drei, die auseinanderlaufen.
+Film strip and lightbox for Astro sites. **One** version for every project,
+instead of three that drift apart.
 
-Ein Klick auf ein Bild öffnet es groß; geblättert wird mit den Pfeilen, den
-Pfeiltasten oder per Wischen, gezoomt mit zwei Fingern oder Doppeltipp,
-geschlossen mit Escape, dem Kreuz, einem Tipp neben das Bild oder dem
-Zurück-Knopf des Browsers. Die Seite dahinter steht still und kommt
-hinterher genau dort wieder, wo sie war.
+Clicking an image opens it large; you page with the arrows, the arrow keys or
+by swiping, zoom with two fingers or a double tap, and close with Escape, the
+cross, a tap beside the image or the browser's back button. The page behind
+stays still and afterwards comes back exactly where it was.
 
-## Einbinden
+## Installation
 
 ```
 npm i git+https://github.com/m-s-1-3/astro-gallery.git#v1.0.0
@@ -20,8 +19,8 @@ npm i git+https://github.com/m-s-1-3/astro-gallery.git#v1.0.0
 import Gallery from '@ms/astro-gallery/Gallery.astro';
 import type { GalleryImage } from '@ms/astro-gallery/types';
 
-const images: GalleryImage[] = fotos.map((f) => ({
-  thumb: klein(f), full: gross(f), alt: f.alt, srcset: satz(f),
+const images: GalleryImage[] = photos.map((p) => ({
+  thumb: small(p), full: large(p), alt: p.alt, srcset: srcsetOf(p),
 }));
 ---
 <Gallery images={images} loop labels={{
@@ -30,123 +29,119 @@ const images: GalleryImage[] = fotos.map((f) => ({
 }} />
 ```
 
-| Eigenschaft | Vorgabe | wofür |
+| Prop | Default | Purpose |
 |---|---|---|
-| `images` | — | die Bilder, `{thumb, full, alt, srcset?, width?, height?}` |
+| `images` | — | the images, `{thumb, full, alt, srcset?, width?, height?}` |
 | `labels` | — | `open`, `prev`, `next`, `close` |
-| `sizes` | `22rem` | `sizes` der Bilder im Streifen |
-| `loop` | `false` | endlos: nach dem letzten kommt wieder das erste |
-| `class` | — | zusätzliche Klasse auf `.ag` |
+| `sizes` | `22rem` | `sizes` of the images in the strip |
+| `loop` | `false` | endless: after the last image comes the first again |
+| `class` | — | extra class on `.ag` |
 
-**Über HTTPS, nicht über SSH, und das Repo öffentlich** — sonst kommt
-`npm ci` im Docker-Build nicht daran. Die Container bauen ohne SSH-Schlüssel
-und ohne Token; ein privates Repo bräuchte an jeder Stelle eines, auch in
-der CI. Geheim ist an einer Galerie nichts.
+**Over HTTPS, not SSH, and the repository public** — otherwise `npm ci` in a
+Docker build cannot reach it. The containers build without SSH keys and
+without tokens; a private repository would need one in every place, CI
+included. Nothing about a gallery is secret.
 
-Die Fassung steht am Tag, nicht an einem Zweig: `#v1.0.0` bleibt, bis jemand
-sie absichtlich hochzieht. Ein `#main` würde bei jedem `npm ci` etwas
-anderes holen, und ein Docker-Build, der gestern lief, liefe morgen nicht.
+The version is pinned to a tag, not a branch: `#v1.0.0` stays until someone
+raises it on purpose. A `#main` would fetch something different on every
+`npm ci`, and a Docker build that worked yesterday might not work tomorrow.
 
-Die Daten holt **jedes Projekt selbst** — aus dem Build, aus einem Bucket,
-aus einem CMS. Das Paket bekommt nur fertige Adressen.
+**Each project fetches its own data** — from the build, from a bucket, from a
+CMS. The package only receives finished URLs.
 
-## Aussehen
+## Styling
 
-Alles hängt an CSS-Variablen auf `.ag`:
+Everything hangs on CSS variables on `.ag`:
 
-| Variable | Vorgabe | wofür |
+| Variable | Default | Purpose |
 |---|---|---|
-| `--ag-accent` | `#ff4d0d` | Rahmen des großen Bildes, Zähler, Knopf beim Überfahren |
-| `--ag-backdrop` | `rgb(12 12 13 / .96)` | Grund hinter dem großen Bild |
-| `--ag-radius` | `0` | Ecken |
-| `--ag-border` | `4px` | Rahmenstärke des großen Bildes |
-| `--ag-thumb` | `clamp(15rem, 32vw, 22rem)` | Höhe der Bilder im Streifen |
-| `--ag-thumb-border` | `0` | Rahmen um die Bilder im Streifen |
-| `--ag-on-dark` | `#fff` | Schrift und Rahmen auf dunklem Grund |
+| `--ag-accent` | `#ff4d0d` | border of the large image, counter, button on hover |
+| `--ag-backdrop` | `rgb(12 12 13 / .96)` | background behind the large image |
+| `--ag-radius` | `0` | corners |
+| `--ag-border` | `4px` | border width of the large image |
+| `--ag-thumb` | `clamp(15rem, 32vw, 22rem)` | height of the images in the strip |
+| `--ag-thumb-border` | `0` | border around the images in the strip |
+| `--ag-on-dark` | `#fff` | text and borders on the dark background |
 
 ```css
-.meine-galerie { --ag-accent: #17a184; --ag-radius: 12px; }
+.my-gallery { --ag-accent: #17a184; --ag-radius: 12px; }
 ```
 
-Die Knöpfe erben `font` und `color` von der Seite — Schrift stellt das Paket
-nicht ein.
+The buttons inherit `font` and `color` from the page — the package sets no
+typeface.
 
-## Endlos blättern
+## Endless paging
 
-`loop` macht aus der Reihe einen Ring: nach dem letzten Bild kommt wieder das
-erste, vor dem ersten das letzte. Aus gutem Grund **nicht** die Vorgabe — bei
-zwanzig Bildern ist das bequem, bei zweien ein Karussell, und ohne Ende weiß
-niemand mehr, dass er alles gesehen hat.
+`loop` turns the row into a ring: after the last image comes the first again,
+before the first the last. For good reason **not** the default — with twenty
+images it is convenient, with two it is a carousel, and without an end nobody
+knows any more that they have seen everything.
 
-Der Umlauf sieht aus wie jeder andere Wechsel. Das Bild, das herumkommt,
-wird vorübergehend in den Nachbarplatz gestellt, der Track gleitet auf diese
-**geliehene** Position, und danach wird ohne sichtbare Änderung auf die
-echte normalisiert. Ein Sprung über alle Bilder zurück läse sich als
-Zurückspulen, nicht als ein Schritt. Solange das läuft (330 ms), nimmt kein
-weiterer Schritt an — zwei Umläufe übereinander ließen den Track zwischen
-zwei Plätzen stehen.
+Wrapping around looks like any other step. The image coming round is placed
+temporarily in the neighbouring slot, the track glides to that **borrowed**
+position, and is then normalised to the real one without any visible change.
+A jump back across all images would read as rewinding, not as one step. While
+that runs (330 ms) no further step is accepted — two wraps on top of each
+other would leave the track stuck between two positions.
 
-Beim Ziehen über das Ende hinaus steht das umgewickelte Bild schon in der
-Vorschau, sonst zöge man gegen eine Lücke. Und der Widerstand an den Enden
-entfällt: wo kein Ende ist, ist nichts zu spüren.
+When dragging past the end, the wrapped image is already in the preview,
+otherwise you would pull against a gap. And the resistance at the ends goes:
+where there is no end, there is nothing to feel.
 
-## Drei Dinge, die hier absichtlich so sind
+## Three things that are deliberate
 
-**Die Slides stehen im Template, nicht im Skript.** Astro macht
-Komponenten-CSS eng, indem es den Elementen **des Templates** ein
-`data-astro-…` anhängt. Eine Vorfassung baute ihre Slides zur Laufzeit —
-Rahmen, Pfeile und Zähler sahen richtig aus, die Bilder waren ein Haufen
-kaputter Symbole. Deshalb `<style is:global>` und Slides im Template.
+**The slides are in the template, not in the script.** Astro scopes component
+CSS by adding a `data-astro-…` attribute to the elements **of the template**.
+An earlier version built its slides at runtime — border, arrows and counter
+looked right, the images were a pile of broken icons. Hence
+`<style is:global>` and slides in the template.
 
-**Das Skript bindet nichts im Voraus.** Astro hebt es ins Seiten-Bündel;
-steckt die Galerie in einer `server:defer`-Insel, läuft es lange bevor es
-ihr Markup gibt. Es hört am `document` und richtet jede Galerie beim ersten
-Anfassen ein. Mehrere Galerien auf einer Seite gehen deshalb auch.
+**The script binds nothing in advance.** Astro hoists it into the page bundle;
+if the gallery sits in a `server:defer` island, the script runs long before
+its markup exists. It listens on `document` and sets up each gallery on first
+touch. That is also why several galleries on one page work.
 
-**Die Pfeile hängen am Zeigertyp, nicht an der Breite.** `pointer: coarse`
-statt `max-width`. Eine Breite kann falsch gemeldet werden: in Chromes
-Geräte-Emulation wurde die Seite in Schreibtisch-Breite in ein Handy-Fenster
-gelegt, die Medienabfrage griff nicht, und auf dem Telefon standen
-Pfeilknöpfe in voller Größe.
+**The arrows depend on the pointer type, not the width.** `pointer: coarse`
+instead of `max-width`. A width can be reported wrongly: in Chrome's device
+emulation the page was laid out at desktop width inside a phone window, the
+media query did not match, and full-size arrow buttons appeared on the phone.
 
-## Scroll-Sperre
+## Scroll lock
 
-`overflow: hidden` reicht nicht — das nimmt die Balken, nicht das Scrollen,
-auf iOS nicht einmal das. Der Body wird festgesetzt und auf seinem Versatz
-gehalten (`html.ag-held`, Versatz in `body.style.top`).
+`overflow: hidden` is not enough — it removes the scrollbars, not the
+scrolling, and on iOS not even that. The body is fixed and held at its offset
+(`html.ag-held`, offset in `body.style.top`).
 
-**`history.scrollRestoration` wird absichtlich nicht angefasst.** Es auf
-`manual` zu setzen, solange ein Bild offen ist, sah aus wie die Lösung dafür,
-dass der Browser beim Zurückgehen die Seite nach oben legt — und war ein
-Fehler, der teuer war: die Einstellung gehört dem **History-Eintrag** und
-überlebt den Reload. Wer mit offenem Bild neu lud, ließ den Eintrag für immer
-auf `manual`, und ab da sprang jeder weitere Reload dieser Seite nach ganz
-oben.
+**`history.scrollRestoration` is deliberately left alone.** Setting it to
+`manual` while an image is open looked like the fix for the browser putting
+the page at the top on going back — and was an expensive mistake: the setting
+belongs to the **history entry** and survives a reload. Anyone who reloaded
+with an image open left that entry on `manual` for good, and from then on
+every further reload of that page jumped to the very top.
 
-Richtig ist stattdessen die **Reihenfolge**: der History-Eintrag wird
-gesetzt, **bevor** der Body festgesetzt wird. Dann speichert der Eintrag die
-echte Scrollposition; ein festgesetzter Body liest sich als null, und genau
-das hatte der Browser gelernt.
+What is right instead is the **order**: the history entry is pushed **before**
+the body is fixed. Then the entry stores the real scroll position; a fixed
+body reads as zero, and that is exactly what the browser had learned.
 
-Aus demselben Grund wird die Seite bei `pagehide` losgelassen: wer mit
-offenem Bild neu lädt, soll dort wieder herauskommen, wo er war, und nicht
-an der Stelle, die der festgesetzte Body vorgetäuscht hat.
+For the same reason the page is released on `pagehide`: whoever reloads with
+an image open should come back where they were, not at the position the fixed
+body pretended.
 
-## Prüfen
+## Testing
 
 ```
-npm test                                  # das Skript in jsdom
-SITE=http://127.0.0.1:4321/de/ npm run check:browser   # in echtem Chrome
+npm test                                  # the script in jsdom
+SITE=http://127.0.0.1:4321/de/ npm run check:browser   # in a real Chrome
 ```
 
-`npm test` klärt, **was der Code tut**. `check:browser` klärt, **wie die
-Seite aussieht** — ob das Bild wirklich gelegt und geladen ist, ob das
-Mausrad nichts bewegt, ob die Seite hinterher an derselben Stelle steht. Es
-braucht eine laufende Seite, die `<Gallery>` benutzt (`SITE=`), und ein
-lokales Chrome (`CHROME=`).
+`npm test` settles **what the code does**. `check:browser` settles **how the
+page looks** — whether the image is really laid out and loaded, whether the
+mouse wheel moves nothing, whether the page is back at the same spot
+afterwards. It needs a running site that uses `<Gallery>` (`SITE=`) and a
+local Chrome (`CHROME=`).
 
-## Benutzt von
+## Used by
 
-- `piscinaidro` — Bilder aus PocketBase, in einer `server:defer`-Insel, `loop`
-- `bibioneseafun` — Bilder aus dem Build *(noch umzustellen)*
-- `fewovogelschar-astro` — *(noch umzustellen)*
+- `piscinaidro` — images from PocketBase, in a `server:defer` island, `loop`
+- `bibioneseafun` — images from the build *(still to be switched)*
+- `fewovogelschar-astro` — *(still to be switched)*
