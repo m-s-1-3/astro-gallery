@@ -41,7 +41,7 @@ test('the stylesheet is global and reaches outside the component', () => {
 });
 
 /** The component's markup, as a page with four pictures. */
-async function open(count = 4, loop = false) {
+async function open(count = 4, loop = false, fly = false) {
   const js = (await transform(source, { loader: 'ts' })).code;
   const frames = Array.from({ length: count }, (_, i) =>
     `<li class="ag-frame"><button class="ag-open" data-ag-open="${i}">`
@@ -50,7 +50,7 @@ async function open(count = 4, loop = false) {
     `<div class="ag-slide"><img class="ag-photo" data-src="big-${i}.webp" alt="Bild ${i + 1}"></div>`).join('');
 
   const dom = new JSDOM(
-    `<!doctype html><html><body><div class="ag" data-ag ${loop ? 'data-ag-loop' : ''}>
+    `<!doctype html><html><body><div class="ag" data-ag ${loop ? 'data-ag-loop' : ''} ${fly ? 'data-ag-fly' : ''}>
        <div class="ag-band">
          <button class="ag-step" data-ag-step="-1">‹</button>
          <ul class="ag-strip" data-ag-strip>${frames}</ul>
@@ -244,4 +244,19 @@ test('nothing is bound before the markup exists', async () => {
     new dom.window.MouseEvent('click', { bubbles: true }));
   dom.window.document.dispatchEvent(
     new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+});
+
+test('where nothing can fly, `fly` opens and closes as before', async () => {
+  // jsdom has no layout and no animations — the same as a browser asked to
+  // reduce motion, or a thumbnail that is out of sight: the picture has to
+  // open and shut without a stand-in being left behind.
+  const g = await open(4, false, true);
+  g.click('[data-ag-open]', 2);
+  assert.ok(g.big.classList.contains('is-open'));
+  assert.equal(g.at(), '3');
+  assert.equal(g.doc.querySelectorAll('.ag-ghost').length, 0);
+  g.window.dispatchEvent(new g.window.PopStateEvent('popstate'));
+  assert.ok(!g.big.classList.contains('is-open'));
+  assert.equal(g.doc.querySelectorAll('.ag-ghost').length, 0);
+  assert.equal(g.doc.querySelector<HTMLElement>('.ag-photo')!.style.visibility, '');
 });

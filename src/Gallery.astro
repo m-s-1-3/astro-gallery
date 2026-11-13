@@ -30,14 +30,19 @@ interface Props {
    *  before the first the last. Off by default — with six pictures the loop
    *  is a nicety, with two it is a merry-go-round. */
   loop?: boolean;
+  /** The clicked picture grows out of the strip into the enlarged view, and
+   *  goes back to its place on closing. Off by default: a site that has this
+   *  gallery already should not find its pictures flying after an update. */
+  fly?: boolean;
 }
 
-const { images, labels, sizes = '22rem', class: extra = '', loop = false } = Astro.props;
+const { images, labels, sizes = '22rem', class: extra = '', loop = false, fly = false } = Astro.props;
 
 /** More than one gallery on a page is allowed, so nothing here is an id. */
 const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.open} ${i + 1}`;
 ---
-<div class:list={['ag', extra]} data-ag data-ag-loop={loop ? '' : undefined}>
+<div class:list={['ag', extra]} data-ag data-ag-loop={loop ? '' : undefined}
+     data-ag-fly={fly ? '' : undefined}>
   <div class="ag-band">
     <button type="button" class="ag-step ag-step-prev" data-ag-step="-1" aria-label={labels.prev}>‹</button>
 
@@ -63,7 +68,11 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
       <div class="ag-track" data-ag-track>
         {images.map((image, i) => (
           <div class="ag-slide">
-            <img class="ag-photo" data-src={image.full} alt={words(image, i)} draggable="false" />
+            <img class="ag-photo" data-src={image.full} alt={words(image, i)} draggable="false"
+              data-w={image.width} data-h={image.height} />
+            {/* Part of the slide, so it travels with its picture and needs no
+                script. Only where a picture has something to say. */}
+            {image.caption?.trim() && <p class="ag-caption">{image.caption}</p>}
           </div>
         ))}
       </div>
@@ -85,6 +94,7 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     photos: HTMLImageElement[];
     at: HTMLElement;
     loop: boolean;
+    fly: boolean;
     index: number;
     vw: number;
     scale: number;
@@ -120,6 +130,7 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
       photos: slides.map((s) => s.querySelector('img')!),
       at: root.querySelector<HTMLElement>('[data-ag-at]')!,
       loop: root.hasAttribute('data-ag-loop'),
+      fly: root.hasAttribute('data-ag-fly'),
       index: 0, vw: 0, scale: 1, tx: 0, ty: 0,
     };
   };
@@ -246,9 +257,177 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
    *  the buttons, the arrow keys and the end of a swipe. */
   const step = (dir: number, fromDrag = 0) => {
     if (!live || crossing) return;
+    settle();
     const next = live.index + dir;
     if (live.loop && (next < 0 || next >= live.slides.length)) cross(dir, fromDrag);
     else goTo(next, true);
+  };
+
+  /** A picture on its way between the strip and the enlarged view (`fly`).
+   *
+   *  What travels is not the picture itself but a stand-in laid over the
+   *  enlarged view: the real one sits inside a track that is being measured
+   *  and placed at that very moment, and on the way in its file is usually
+   *  not even loaded. The stand-in is laid out where the journey ENDS and
+   *  moved by `transform` alone, so the browser turns it as one layer.
+   *
+   *  `flight` lands the one under way at once — whatever comes next (a step,
+   *  closing, opening another) calls it first instead of running into it. */
+  let flight: (() => void) | null = null;
+  const settle = () => { const land = flight; flight = null; land?.(); };
+  const FLY_IN = 380, FLY_OUT = 300;
+  const calm = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const loaded = (img: HTMLImageElement) => img.complete && img.naturalWidth > 0;
+  const within = (r: DOMRect) => r.width > 0 && r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight;
+
+  /** The stand-in, laid out at `at` inside `host`. */
+  const ghostAt = (host: HTMLElement, src: string, at: DOMRect) => {
+    const base = host.getBoundingClientRect();
+    const ghost = document.createElement('img');
+    ghost.className = 'ag-ghost';
+    ghost.alt = '';
+    ghost.draggable = false;
+    ghost.src = src;
+    Object.assign(ghost.style, {
+      left: `${at.left - base.left}px`, top: `${at.top - base.top}px`,
+      width: `${at.width}px`, height: `${at.height}px`,
+    });
+    host.append(ghost);
+    return ghost;
+  };
+  /** The transform that makes something laid out at `at` look like `as`. */
+  const morph = (at: DOMRect, as: DOMRect) =>
+    `translate(${as.left - at.left}px, ${as.top - at.top}px) scale(${as.width / at.width}, ${as.height / at.height})`;
+
+  /** Where the enlarged picture will stand once its file is there — worked
+   *  out from the slide, for the moment before the large file has told its
+   *  own size. The shape comes from the size the site gave (`data-w`,
+   *  `data-h`), else from the thumbnail. A file is never drawn larger than
+   *  it is, so with a known size the target stops there — guessed from the
+   *  room alone, a small picture flew in too big and then shrank to its
+   *  real size the moment it arrived. The border counts once: inside the
+   *  constraints with `box-sizing: border-box`, on top of them otherwise. */
+  const fitted = (slide: HTMLElement, photo: HTMLImageElement, thumb: HTMLImageElement, from: DOMRect) => {
+    const box = slide.getBoundingClientRect();
+    const pad = getComputedStyle(slide);
+    const look = getComputedStyle(photo);
+    const edge = parseFloat(look.borderLeftWidth) || 0;
+    const left = box.left + parseFloat(pad.paddingLeft), top = box.top + parseFloat(pad.paddingTop);
+    const maxW = box.width - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight);
+    const maxH = box.height - parseFloat(pad.paddingTop) - parseFloat(pad.paddingBottom);
+    const nw = Number(photo.dataset.w) || 0, nh = Number(photo.dataset.h) || 0;
+    const ratio = nw && nh ? nw / nh
+      : thumb.naturalWidth && thumb.naturalHeight ? thumb.naturalWidth / thumb.naturalHeight
+      : from.width / from.height;
+    const inset = look.boxSizing === 'border-box' ? 2 * edge : 0;
+    const roomW = maxW - inset, roomH = maxH - inset;
+    let cw = Math.min(roomW, roomH * ratio), ch = cw / ratio;
+    if (nw && nh && cw > nw) { cw = nw; ch = nh; }
+    const w = cw + 2 * edge, h = ch + 2 * edge;
+    return new DOMRect(left + (maxW - w) / 2, top + (maxH - h) / 2, w, h);
+  };
+
+  /** Backdrop, slides and buttons coming up (or going down) around the
+   *  travelling picture. Held at the end so nothing flashes back before the
+   *  caller has tidied up; the caller cancels them. */
+  const fade = (l: Live, dir: 1 | -1, ms: number) => {
+    const opts: KeyframeAnimationOptions = { duration: ms, easing: 'ease', fill: 'forwards', direction: dir > 0 ? 'normal' : 'reverse' };
+    return [
+      l.big.animate({ backgroundColor: ['transparent', getComputedStyle(l.big).backgroundColor] }, opts),
+      ...[l.view, ...l.big.querySelectorAll<HTMLElement>('.ag-btn, .ag-count')]
+        .map((el) => el.animate({ opacity: [0, 1] }, opts)),
+    ];
+  };
+
+  /** From the strip into the enlarged view. `from` is where the thumbnail
+   *  stood when it was clicked. */
+  const arrive = (l: Live, thumb: HTMLImageElement, from: DOMRect) => {
+    const photo = l.photos[l.index]!, slide = l.slides[l.index]!;
+    if (calm() || !within(from) || typeof photo.animate !== 'function') return;
+    const ready = loaded(photo);
+    const to = ready ? photo.getBoundingClientRect() : fitted(slide, photo, thumb, from);
+    if (!to.width || !to.height) return;
+
+    const ghost = ghostAt(l.big, ready ? photo.currentSrc || photo.src : thumb.currentSrc || thumb.src, to);
+    photo.style.visibility = 'hidden';
+    thumb.style.visibility = 'hidden';
+    const fades = fade(l, 1, FLY_IN);
+    const move = ghost.animate({ transform: [morph(to, from), 'none'] }, { duration: FLY_IN, easing: EASE });
+
+    const swap = () => { photo.style.visibility = ''; ghost.remove(); };
+    const land = () => {
+      move.cancel();
+      for (const f of fades) f.cancel();
+      thumb.style.visibility = '';
+      if (loaded(photo)) { swap(); return; }
+      // The large file is still on its way: the stand-in stays, now as part
+      // of the slide, so it leafs away with it. When the file arrives and
+      // turns out smaller than the room it was given, the stand-in closes
+      // in on it first.
+      const at = ghost.getBoundingClientRect();
+      const home = slide.getBoundingClientRect();
+      Object.assign(ghost.style, { left: `${at.left - home.left}px`, top: `${at.top - home.top}px` });
+      slide.append(ghost);
+      const arrived = () => {
+        if (!ghost.isConnected) return;
+        const real = photo.getBoundingClientRect(), now = ghost.getBoundingClientRect();
+        const off = Math.abs(real.width - now.width) + Math.abs(real.left - now.left) + Math.abs(real.top - now.top);
+        if (off < 2 || !real.width) { swap(); return; }
+        ghost.animate({ transform: ['none', morph(now, real)] }, { duration: 180, easing: 'ease', fill: 'forwards' })
+          .finished.then(swap, swap);
+      };
+      photo.addEventListener('load', arrived, { once: true });
+      photo.addEventListener('error', swap, { once: true });
+    };
+    flight = land;
+    move.finished.then(() => { if (flight === land) settle(); }, () => {});
+  };
+
+  /** From the enlarged view back into the strip. Returns false when there is
+   *  nowhere to fly to; `done` then has to be called by the caller. */
+  const leave = (l: Live, done: () => void): boolean => {
+    const photo = l.photos[l.index];
+    const thumb = l.root.querySelector<HTMLImageElement>(`[data-ag-open="${l.index}"] img`);
+    const strip = l.root.querySelector<HTMLElement>('[data-ag-strip]');
+    if (!photo || !thumb || calm() || typeof photo.animate !== 'function') return false;
+    const standIn = l.slides[l.index]!.querySelector<HTMLImageElement>('.ag-ghost');
+    const shown = standIn ?? (loaded(photo) ? photo : null);
+    if (!shown) return false;
+    const from = shown.getBoundingClientRect();
+
+    // The picture left on may not be the one that was opened, and its
+    // thumbnail may be out of sight in the strip: bring it in first.
+    const frame = thumb.closest<HTMLElement>('.ag-frame');
+    if (strip && frame) {
+      const s = strip.getBoundingClientRect(), f = frame.getBoundingClientRect();
+      if (f.left < s.left || f.right > s.right) {
+        strip.scrollTo({ left: strip.scrollLeft + f.left - s.left - (s.width - f.width) / 2, behavior: 'instant' });
+      }
+    }
+    const to = thumb.getBoundingClientRect();
+    if (!within(to) || !from.width || !from.height) return false;
+
+    const ghost = ghostAt(l.big, shown.currentSrc || shown.src, from);
+    standIn?.remove();
+    photo.style.visibility = 'hidden';
+    thumb.style.visibility = 'hidden';
+    // The page is the visitor's again from the first moment, not only once
+    // the picture has landed.
+    l.big.style.pointerEvents = 'none';
+    const fades = fade(l, -1, FLY_OUT);
+    const move = ghost.animate({ transform: ['none', morph(from, to)] }, { duration: FLY_OUT, easing: EASE, fill: 'forwards' });
+    const land = () => {
+      done();
+      move.cancel();
+      for (const f of fades) f.cancel();
+      ghost.remove();
+      thumb.style.visibility = '';
+      photo.style.visibility = '';
+      l.big.style.pointerEvents = '';
+    };
+    flight = land;
+    move.finished.then(() => { if (flight === land) settle(); }, () => {});
+    return true;
   };
 
   /** Holding the page still, and giving it back where it stood.
@@ -283,7 +462,11 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     requestAnimationFrame(back);
   };
 
-  const open = (root: HTMLElement, i: number) => {
+  const open = (root: HTMLElement, i: number, thumb?: HTMLImageElement | null) => {
+    settle();
+    // Taken now: pinning the page takes its scrollbar, and the strip with it
+    // moves a few pixels.
+    const from = thumb?.getBoundingClientRect();
     live = wake(root);
     if (!live.slides.length) { live = null; return; }
     live.index = clamp(i, 0, live.slides.length - 1);
@@ -304,15 +487,25 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     measure();
     draw(0, false);
     requestAnimationFrame(() => { measure(); draw(0, false); });
+    if (live.fly && thumb && from) arrive(live, thumb, from);
   };
 
   const shut = () => {
     if (!live) return;
-    live.big.classList.remove('is-open');
-    live.big.setAttribute('aria-hidden', 'true');
+    settle();
+    const l = live;
+    const hide = () => {
+      l.big.classList.remove('is-open');
+      l.big.setAttribute('aria-hidden', 'true');
+      for (const ghost of l.root.querySelectorAll('.ag-ghost')) ghost.remove();
+      for (const photo of l.photos) photo.style.visibility = '';
+    };
+    // Released first either way: the thumbnail the picture flies back to
+    // only stands where it will stay once the page has its scrollbar again.
     release();
     shift.clear();
     live = null;
+    if (!l.fly || !leave(l, hide)) hide();
   };
   const close = () => { if (pushed) history.back(); else shut(); };
   window.addEventListener('popstate', () => { if (live) { pushed = false; shut(); } });
@@ -332,7 +525,7 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     const opener = target.closest<HTMLElement>('[data-ag-open]');
     if (opener) {
       const root = opener.closest<HTMLElement>('[data-ag]');
-      if (root) open(root, Number(opener.dataset.agOpen) || 0);
+      if (root) open(root, Number(opener.dataset.agOpen) || 0, opener.querySelector('img'));
       return;
     }
 
@@ -382,6 +575,7 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
 
   document.addEventListener('pointerdown', (e) => {
     if (!onView(e)) return;
+    settle();
     live!.view.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.size === 2) {
@@ -559,6 +753,7 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
   .ag-view { position: absolute; inset: 0; overflow: hidden; touch-action: none; z-index: 1; }
   .ag-track { display: flex; height: 100%; will-change: transform; }
   .ag-slide {
+    position: relative;
     flex: 0 0 100%;
     height: 100%;
     display: flex;
@@ -578,6 +773,38 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     user-select: none;
     -webkit-user-drag: none;
     transform-origin: center center;
+  }
+  /* The stand-in that travels between the strip and the enlarged view
+     (`fly`). Made by the script — reached because this sheet is global. */
+  .ag-ghost {
+    position: absolute;
+    z-index: 2;
+    box-sizing: border-box;
+    max-width: none;
+    margin: 0;
+    object-fit: cover;
+    border: var(--ag-border) solid var(--ag-accent);
+    border-radius: var(--ag-radius);
+    transform-origin: 0 0;
+    will-change: transform;
+    pointer-events: none;
+    user-select: none;
+  }
+  /* Sits on the lower edge of the slide, above the counter. */
+  .ag-caption {
+    position: absolute;
+    left: 50%;
+    bottom: 4.1rem;
+    transform: translateX(-50%);
+    max-width: min(90%, 40rem);
+    margin: 0;
+    padding: 0.35rem 1rem;
+    border-radius: var(--ag-radius);
+    background: var(--ag-caption-bg, rgb(0 0 0 / 0.6));
+    color: var(--ag-on-dark);
+    font: inherit;
+    text-align: center;
+    pointer-events: none;
   }
   .ag-btn {
     position: absolute;

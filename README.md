@@ -31,10 +31,11 @@ const images: GalleryImage[] = photos.map((p) => ({
 
 | Prop | Default | Purpose |
 |---|---|---|
-| `images` | — | the images, `{thumb, full, alt, srcset?, width?, height?}` |
+| `images` | — | the images, `{thumb, full, alt, caption?, srcset?, width?, height?}` |
 | `labels` | — | `open`, `prev`, `next`, `close` |
 | `sizes` | `22rem` | `sizes` of the images in the strip |
 | `loop` | `false` | endless: after the last image comes the first again |
+| `fly` | `false` | the clicked image grows out of the strip into the large view and flies back on closing |
 | `class` | — | extra class on `.ag` |
 
 **Over HTTPS, not SSH, and the repository public** — otherwise `npm ci` in a
@@ -49,6 +50,13 @@ raises it on purpose. A `#main` would fetch something different on every
 **Each project fetches its own data** — from the build, from a bucket, from a
 CMS. The package only receives finished URLs.
 
+## Captions
+
+`caption` appears under the image in the large view ("Waiting area"). It
+belongs to the slide and travels with its image when paging; an image without
+`caption` shows none. `alt` stays separate: that is the text alternative for
+screen readers, the caption is for everyone.
+
 ## Styling
 
 Everything hangs on CSS variables on `.ag`:
@@ -62,6 +70,7 @@ Everything hangs on CSS variables on `.ag`:
 | `--ag-thumb` | `clamp(15rem, 32vw, 22rem)` | height of the images in the strip |
 | `--ag-thumb-border` | `0` | border around the images in the strip |
 | `--ag-on-dark` | `#fff` | text and borders on the dark background |
+| `--ag-caption-bg` | `rgb(0 0 0 / .6)` | background behind the caption |
 
 ```css
 .my-gallery { --ag-accent: #17a184; --ag-radius: 12px; }
@@ -87,6 +96,40 @@ other would leave the track stuck between two positions.
 When dragging past the end, the wrapped image is already in the preview,
 otherwise you would pull against a gap. And the resistance at the ends goes:
 where there is no end, there is nothing to feel.
+
+## Flying in
+
+With `fly` (since 1.3.0) the clicked image grows from its place in the strip
+into the large view; on closing it flies back — to the image where you
+**stopped**, not the one you started with. If that image's thumbnail is
+currently outside the strip, it is brought into view first. **Not** the
+default: a site that already has the gallery should not find flying images
+after an update without asking for them.
+
+What flies is not the large image but a **stand-in** (`.ag-ghost`) lying over
+the large view. The real image sits in a track that is measured and laid out
+at exactly this moment, and its file has usually not even loaded when the view
+opens. The stand-in is laid out where the journey **ends** and moved only via
+`transform`.
+
+- If the large file is still on its way at landing, the stand-in (with the
+  thumbnail) stays in place until it arrives — as part of the slide, so it
+  moves along when paging.
+- Any further action (a step, a swipe, closing, opening another image)
+  **lands the running flight at once** instead of running into it.
+- On closing, the page belongs to the visitor again from the first moment
+  (`pointer-events: none` on the view), not only after landing.
+- With `prefers-reduced-motion: reduce` nothing flies; the view opens and
+  closes as without `fly`.
+
+The stand-in carries the border and radius of the large view (`--ag-border`,
+`--ag-radius`). Give `width` and `height` of the large file (or the original):
+before that file has loaded, they tell the flight the shape of the picture and
+where it stops — a picture is never drawn larger than it is, so a small one
+must not fly in at the size of the screen and shrink on arrival. Without them
+the shape comes from the thumbnail, which must then have the same shape as the
+large image — in the strip it does, because it lays images out by height and
+crops nothing. Whoever crops their thumbnails with CSS gets a distorted journey.
 
 ## Three things that are deliberate
 
@@ -145,3 +188,4 @@ local Chrome (`CHROME=`).
 - `piscinaidro` — images from PocketBase, in a `server:defer` island, `loop`
 - `bibioneseafun` — images from the build *(still to be switched)*
 - `fewovogelschar-astro` — *(still to be switched)*
+- `zap_ambroz` — images from the build, with captions, `fly`

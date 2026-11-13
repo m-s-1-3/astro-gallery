@@ -12,8 +12,16 @@ export interface GalleryImage {
   /** What the picture shows, for a screen reader and for a broken image.
    *  Empty is allowed; the gallery then numbers it from `labels.open`. */
   alt: string;
+  /** Shown under the picture in the enlarged view: "Wartebereich". Unlike
+   *  `alt` it is for everyone, and a picture without one simply has none. */
+  caption?: string | undefined;
   /** Optional `srcset` for the thumbnail. */
   srcset?: string | undefined;
+  /** The size of the picture in pixels: put on the thumbnail so the strip
+   *  keeps its place while loading, and with `fly` the shape and the upper
+   *  limit of the enlarged view before the large file has loaded. Give the
+   *  size of the LARGE file, or the original's; a picture is never drawn
+   *  larger than it is. */
   width?: number | undefined;
   height?: number | undefined;
 }
