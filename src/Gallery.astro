@@ -34,15 +34,21 @@ interface Props {
    *  goes back to its place on closing. Off by default: a site that has this
    *  gallery already should not find its pictures flying after an update. */
   fly?: boolean;
+  /** The pictures of the strip settle in (rise and fade, one after the other)
+   *  while the strip scrolls into view. Pure CSS, bound to the scroll
+   *  position; on by default because it only moves transform and opacity and
+   *  ends in the state the page would have had anyway. `reveal={false}` for
+   *  a gallery that must stand still. */
+  reveal?: boolean;
 }
 
-const { images, labels, sizes = '22rem', class: extra = '', loop = false, fly = false } = Astro.props;
+const { images, labels, sizes = '22rem', class: extra = '', loop = false, fly = false, reveal = true } = Astro.props;
 
 /** More than one gallery on a page is allowed, so nothing here is an id. */
 const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.open} ${i + 1}`;
 ---
 <div class:list={['ag', extra]} data-ag data-ag-loop={loop ? '' : undefined}
-     data-ag-fly={fly ? '' : undefined}>
+     data-ag-fly={fly ? '' : undefined} data-ag-reveal={reveal ? '' : undefined}>
   <div class="ag-band">
     <button type="button" class="ag-step ag-step-prev" data-ag-step="-1" aria-label={labels.prev}>‹</button>
 
@@ -106,6 +112,43 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
   const MAX_ZOOM = 4;
   const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
+  /** Pictures that fade in when they have loaded, instead of appearing in
+   *  pieces. Only a picture that is NOT there yet is held back
+   *  (`data-ag-wait`, opacity 0): one that is already complete is left alone,
+   *  and without script nothing is ever held back. When the file arrives the
+   *  hold is lifted and `data-ag-in` plays a short fade (an animation, not a
+   *  transition: the lightbox photo carries an inline `transition` for the
+   *  zoom). An error lifts the hold too, so the alt text is not hidden.
+   *  The stand-in of `fly` is not looked at — it is not a strip picture and
+   *  not an `.ag-photo`. */
+  const softly = (img: HTMLImageElement) => {
+    if (img.complete || img.hasAttribute('data-ag-wait')) return;
+    img.setAttribute('data-ag-wait', '');
+    const lift = (ok: boolean) => {
+      img.removeAttribute('data-ag-wait');
+      // While a stand-in is still covering this picture it is swapped for it
+      // at once; fading it up underneath would show as a flash.
+      if (ok && !img.closest('[data-ag]')?.querySelector('.ag-ghost')) img.setAttribute('data-ag-in', '');
+    };
+    img.addEventListener('load', () => lift(true), { once: true });
+    img.addEventListener('error', () => lift(false), { once: true });
+  };
+  const soften = (scope: ParentNode) => {
+    for (const img of scope.querySelectorAll<HTMLImageElement>('.ag-open img, .ag-photo[src]')) softly(img);
+  };
+  // The markup may arrive later (a `server:defer` island), so watch for it.
+  const arrivals = () => {
+    soften(document);
+    if (typeof MutationObserver !== 'function') return;
+    new MutationObserver((records) => {
+      for (const r of records) for (const n of r.addedNodes) {
+        if (n instanceof Element) { if (n.matches('[data-ag], [data-ag] *') || n.querySelector('[data-ag]')) soften(n.closest('[data-ag]') ?? n); }
+      }
+    }).observe(document.documentElement, { childList: true, subtree: true });
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', arrivals, { once: true });
+  else arrivals();
+
   /** The gallery whose picture is open, if any. There is at most one. */
   let live: Live | null = null;
   /** Slides standing somewhere other than their own place, while a loop is
@@ -145,7 +188,7 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     for (const d of [0, 1, -1]) {
       const j = live.loop ? (live.index + d + n) % n : live.index + d;
       const photo = live.photos[j];
-      if (photo && !photo.src && photo.dataset.src) photo.src = photo.dataset.src;
+      if (photo && !photo.src && photo.dataset.src) { photo.src = photo.dataset.src; softly(photo); }
     }
   };
 
@@ -668,6 +711,11 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     --ag-thumb: clamp(15rem, 32vw, 22rem);
     --ag-thumb-border: 0;
     --ag-on-dark: #fff;
+    /* Motion. `--ag-fade`: how long a picture takes to fade in once loaded
+       (`0s` = off). `--ag-reveal-rise`: how far the strip pictures rise while
+       they settle in (`0px` = fade only). */
+    --ag-fade: 0.5s;
+    --ag-reveal-rise: 1.25rem;
   }
 
   .ag-band { position: relative; }
@@ -852,5 +900,49 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
   }
   @media (prefers-reduced-motion: reduce) {
     .ag-track, .ag-slide, .ag-photo { transition: none !important; }
+  }
+
+  /* ── Soft arrival ─────────────────────────────────────────────────────── */
+
+  /* A picture the script is still waiting for stays invisible, then fades in.
+     Both attributes are set by script only: without it, everything is simply
+     there. An animation with a `from` and no `to` ends at the picture's own
+     opacity. With reduced motion nothing is held back at all. */
+  @media (prefers-reduced-motion: no-preference) {
+    .ag-open img[data-ag-wait], .ag-photo[data-ag-wait] { opacity: 0; }
+    @keyframes ag-fade-in { from { opacity: 0; } }
+    .ag-open img[data-ag-in], .ag-photo[data-ag-in] { animation: ag-fade-in var(--ag-fade) ease; }
+  }
+
+  /* The strip settles in while it scrolls into view: each picture rises a
+     little and fades up, a few per cent of the scroll later than the one
+     before. Bound to the scroll position by a view timeline on the strip,
+     shared with the pictures through `timeline-scope` on the root. Only
+     transform and opacity, so nothing around it moves. The keyframes have no
+     `to`: a picture ends at its own style, and a browser without scroll
+     timelines shows the strip as it is. */
+  @media (prefers-reduced-motion: no-preference) {
+    @supports (animation-timeline: view()) and (timeline-scope: --ag-in) {
+      @keyframes ag-settle {
+        from { opacity: 0; transform: translate3d(0, var(--ag-reveal-rise), 0); }
+      }
+      .ag[data-ag-reveal] { timeline-scope: --ag-in; }
+      .ag[data-ag-reveal] .ag-strip { view-timeline: --ag-in block; }
+      .ag[data-ag-reveal] .ag-frame {
+        --ag-i: 0;
+        /* Longhands on purpose: a minifier folds `animation` plus
+           `animation-timeline` into one shorthand that browsers which know
+           scroll timelines but not the shorthand slot then drop whole. */
+        animation-name: ag-settle;
+        animation-timing-function: linear;
+        animation-fill-mode: both;
+        animation-timeline: --ag-in;
+        animation-range: entry calc(var(--ag-i) * 6%) entry calc(50% + var(--ag-i) * 6%);
+      }
+      .ag[data-ag-reveal] .ag-frame:nth-child(2) { --ag-i: 1; }
+      .ag[data-ag-reveal] .ag-frame:nth-child(3) { --ag-i: 2; }
+      .ag[data-ag-reveal] .ag-frame:nth-child(4) { --ag-i: 3; }
+      .ag[data-ag-reveal] .ag-frame:nth-child(n+5) { --ag-i: 4; }
+    }
   }
 </style>

@@ -64,8 +64,28 @@ for (const [name, viewport, coarse] of sizes) {
   // phone-sized window. It must not come back.
   is('the viewport scale is not locked', /maximum-scale|user-scalable/.test(page_.viewport), false);
 
+  // The strip settles in with the scroll and, once the page has been
+  // scrolled past it, every picture stands fully there. Chrome supports scroll
+  // timelines; where `reveal` is on, the frames carry the animation.
+  const revealOn = await page.evaluate(() => !!document.querySelector('[data-ag-reveal]'));
+  if (revealOn) {
+    is('the strip pictures settle in on scroll', await page.evaluate(() =>
+      getComputedStyle(document.querySelector('.ag-frame')).animationName), 'ag-settle');
+    await page.evaluate(() => document.querySelector('.ag-strip').scrollIntoView({ block: 'center' }));
+    await wait(600);
+    is('and are all fully there once in view', await page.evaluate(() =>
+      [...document.querySelectorAll('.ag-frame')].slice(0, 2).every((f) => getComputedStyle(f).opacity === '1')), true);
+  }
+  // Soft arrival: nothing stays held back once it has loaded (a hold left on
+  // would be a picture that never shows), and the stand-in is never touched.
+  is('loaded strip pictures are not held back', await page.evaluate(() =>
+    [...document.querySelectorAll('.ag-open img')].filter((im) => im.complete && im.hasAttribute('data-ag-wait')).length), 0);
+  is('and are fully opaque', await page.evaluate(() =>
+    [...document.querySelectorAll('.ag-open img')].filter((im) => im.complete)
+      .every((im) => getComputedStyle(im).opacity === '1')), true);
+
   await page.click('[data-ag-open]');
-  await wait(700);
+  await wait(900);
 
   // Where the page was pinned. The script writes it into the body, so the
   // check does not have to guess.
@@ -81,6 +101,11 @@ for (const [name, viewport, coarse] of sizes) {
     const im = document.querySelectorAll('.ag-photo')[0];
     const r = im.getBoundingClientRect();
     return r.width > 100 && r.height > 100 && im.complete && im.naturalWidth > 0;
+  }), true);
+
+  is('the large picture is fully shown after its fade', await page.evaluate(() => {
+    const im = document.querySelectorAll('.ag-photo')[0];
+    return !im.hasAttribute('data-ag-wait') && getComputedStyle(im).opacity === '1';
   }), true);
 
   await page.mouse.move(viewport.width / 2, viewport.height / 2);
@@ -111,6 +136,32 @@ for (const [name, viewport, coarse] of sizes) {
     getComputedStyle(document.documentElement).scrollbarWidth), 'none');
 
   await page.close();
+}
+
+// Reduced motion and no script: nothing may stay hidden or move.
+{
+  console.log('\nreduced motion');
+  const page = await browser.newPage();
+  await page.setViewport({ width: 1440, height: 900 });
+  await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+  await page.goto(SITE, { waitUntil: 'networkidle2', timeout: 60000 });
+  await wait(800);
+  is('no settle-in', await page.evaluate(() => getComputedStyle(document.querySelector('.ag-frame')).animationName), 'none');
+  is('pictures are there at once', await page.evaluate(() =>
+    [...document.querySelectorAll('.ag-open img')].every((im) => getComputedStyle(im).opacity === '1')), true);
+  await page.close();
+
+  console.log('\nno script');
+  const bare = await browser.newPage();
+  await bare.setViewport({ width: 1440, height: 900 });
+  await bare.setJavaScriptEnabled(false);
+  await bare.goto(SITE, { waitUntil: 'networkidle2', timeout: 60000 });
+  await bare.evaluate(() => document.querySelector('.ag-strip').scrollIntoView({ block: 'center' }));
+  await wait(600);
+  is('the pictures are visible', await bare.evaluate(() =>
+    [...document.querySelectorAll('.ag-open img')].every((im) =>
+      !im.hasAttribute('data-ag-wait') && getComputedStyle(im).opacity === '1')), true);
+  await bare.close();
 }
 
 await browser.close();

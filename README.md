@@ -36,6 +36,7 @@ const images: GalleryImage[] = photos.map((p) => ({
 | `sizes` | `22rem` | `sizes` of the images in the strip |
 | `loop` | `false` | endless: after the last image comes the first again |
 | `fly` | `false` | the clicked image grows out of the strip into the large view and flies back on closing |
+| `reveal` | `true` | the strip pictures settle in (rise and fade, one after the other) while the strip scrolls into view; `reveal={false}` turns it off |
 | `class` | — | extra class on `.ag` |
 
 **Over HTTPS, not SSH, and the repository public** — otherwise `npm ci` in a
@@ -71,6 +72,8 @@ Everything hangs on CSS variables on `.ag`:
 | `--ag-thumb-border` | `0` | border around the images in the strip |
 | `--ag-on-dark` | `#fff` | text and borders on the dark background |
 | `--ag-caption-bg` | `rgb(0 0 0 / .6)` | background behind the caption |
+| `--ag-fade` | `0.5s` | how long a picture takes to fade in once loaded (`0s` = off) |
+| `--ag-reveal-rise` | `1.25rem` | how far the strip pictures rise while settling in (`0px` = fade only) |
 
 ```css
 .my-gallery { --ag-accent: #17a184; --ag-radius: 12px; }
@@ -130,6 +133,45 @@ must not fly in at the size of the screen and shrink on arrival. Without them
 the shape comes from the thumbnail, which must then have the same shape as the
 large image — in the strip it does, because it lays images out by height and
 crops nothing. Whoever crops their thumbnails with CSS gets a distorted journey.
+
+## Settling in and fading in (since 1.4.0)
+
+Two soft movements, both on by default, both off with reduced motion.
+
+**The strip settles in.** While the strip scrolls into view from below, its
+pictures rise a little and fade up, each a few per cent of the scroll later
+than the one before — a staggered arrival, as if the row were laid out as you
+reach it. It is CSS only: a view timeline on `.ag-strip`, shared with the
+frames through `timeline-scope` on `.ag`, so the motion follows the scroll
+position (scroll back and it runs backwards) and no script is involved. Only
+`transform` and `opacity` move, so nothing around the strip shifts; the
+keyframes have no `to`, so a picture always ends in its own style. Browsers
+without scroll timelines, and visitors who asked for reduced motion, simply
+see the strip. `reveal={false}` removes it; `--ag-reveal-rise` sets the
+distance. The stagger covers the first five pictures (6 % of the entry range
+apart).
+
+**Pictures fade in when loaded.** In the strip and in the large view a picture
+that is not there yet stays invisible and fades up once its file has arrived,
+instead of appearing from the top down. Details that matter:
+
+- Held back is only what is *not complete* when the script looks at it. A
+  cached picture is never hidden, so there is no flicker; an error lifts the
+  hold at once, so the alt text and the broken-image frame are not hidden.
+- It is attribute-driven (`data-ag-wait`, then `data-ag-in`), set by script
+  only. Without script the pictures are simply visible.
+- It is an animation, not a transition: the large photo carries an inline
+  `transition` for the zoom, which would win over a CSS one.
+- Galleries that arrive later (a `server:defer` island) are picked up by a
+  `MutationObserver`; the large pictures are watched from the moment their
+  file is set.
+- The `fly` stand-in (`.ag-ghost`) is never touched, and a picture that is
+  still covered by it lands without a fade, so there is no flash on landing.
+- With reduced motion nothing is held back at all. `--ag-fade: 0s` switches
+  it off.
+
+A site that fades its own images (the starter's `.js img` rule) should keep
+leaving `.ag img` out of it, as before.
 
 ## Three things that are deliberate
 

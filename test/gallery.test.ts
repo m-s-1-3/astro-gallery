@@ -260,3 +260,113 @@ test('where nothing can fly, `fly` opens and closes as before', async () => {
   assert.equal(g.doc.querySelectorAll('.ag-ghost').length, 0);
   assert.equal(g.doc.querySelector<HTMLElement>('.ag-photo')!.style.visibility, '');
 });
+
+// ── Soft arrival and settling in ───────────────────────────────────────────
+
+const tick = (window: { setTimeout: typeof setTimeout }) => new Promise((r) => window.setTimeout(r, 20));
+
+test('`reveal` is a prop, on by default, and reaches the root as a hook', () => {
+  assert.match(component, /reveal = true/);
+  assert.match(template, /data-ag-reveal=\{reveal \? '' : undefined\}/);
+});
+
+test('the settle-in is scroll-bound, guarded and off for reduced motion', () => {
+  const at = styles.indexOf('ag-settle');
+  assert.ok(at > 0, 'the keyframes exist');
+  const guards = styles.slice(0, styles.indexOf('@keyframes ag-settle'));
+  assert.match(guards, /@media \(prefers-reduced-motion: no-preference\)\s*{\s*@supports \(animation-timeline: view\(\)\)/);
+  assert.match(styles, /\.ag\[data-ag-reveal\] \.ag-strip \{ view-timeline: --ag-in block; \}/);
+  assert.match(styles, /timeline-scope: --ag-in/);
+  // Only opacity and transform move; the keyframes have no `to`.
+  const frames = styles.slice(styles.indexOf('@keyframes ag-settle'), styles.indexOf('@keyframes ag-settle') + 200);
+  assert.doesNotMatch(frames, /\bto\b\s*{/);
+  assert.doesNotMatch(frames, /(width|height|margin|top|left)\s*:/);
+});
+
+test('the fade-in only holds back what is not there yet, only through script, never for reduced motion', () => {
+  // Without script no attribute is ever set, so the hold has to hang off one.
+  assert.match(styles, /\.ag-open img\[data-ag-wait\], \.ag-photo\[data-ag-wait\] \{ opacity: 0; \}/);
+  assert.doesNotMatch(styles, /\.ag-open img \{[^}]*opacity: 0/);
+  // The hold and the fade sit inside the no-preference query: with reduced
+  // motion the hold would only be a delayed pop.
+  const hold = styles.indexOf('[data-ag-wait], .ag-photo[data-ag-wait]');
+  const query = styles.lastIndexOf('@media', hold);
+  assert.match(styles.slice(query, hold), /^@media \(prefers-reduced-motion: no-preference\)/);
+});
+
+test('a strip picture still loading is held back, then fades in when it has loaded', async () => {
+  const g = await open();
+  await tick(g.window);
+  const img = g.doc.querySelectorAll<HTMLImageElement>('.ag-open img')[0]!;
+  assert.ok(img.hasAttribute('data-ag-wait'), 'held back while loading');
+  img.dispatchEvent(new g.window.Event('load'));
+  assert.ok(!img.hasAttribute('data-ag-wait'));
+  assert.ok(img.hasAttribute('data-ag-in'), 'the fade plays');
+});
+
+test('a picture that is already complete is left alone', async () => {
+  const g = await open();
+  const img = g.doc.querySelectorAll<HTMLImageElement>('.ag-open img')[1]!;
+  Object.defineProperty(img, 'complete', { value: true });
+  await tick(g.window);
+  const other = g.doc.querySelectorAll<HTMLImageElement>('.ag-open img')[0]!;
+  assert.ok(other.hasAttribute('data-ag-wait'));
+  // Re-scan through the same path an island arrival takes.
+  const late = g.doc.createElement('div');
+  late.innerHTML = '<div class="ag" data-ag><ul><li><button class="ag-open"><img id="late" src="x.webp"></button></li></ul></div>';
+  const lateImg = late.querySelector<HTMLImageElement>('#late')!;
+  Object.defineProperty(lateImg, 'complete', { value: true });
+  g.doc.body.append(late);
+  await tick(g.window);
+  assert.ok(!lateImg.hasAttribute('data-ag-wait'));
+  assert.ok(!lateImg.hasAttribute('data-ag-in'));
+});
+
+test('an error lifts the hold without a fade, so the alt text shows', async () => {
+  const g = await open();
+  await tick(g.window);
+  const img = g.doc.querySelectorAll<HTMLImageElement>('.ag-open img')[2]!;
+  img.dispatchEvent(new g.window.Event('error'));
+  assert.ok(!img.hasAttribute('data-ag-wait'));
+  assert.ok(!img.hasAttribute('data-ag-in'));
+});
+
+test('pictures of a gallery that arrives later are picked up too', async () => {
+  const js = (await transform(source, { loader: 'ts' })).code;
+  const dom = new JSDOM('<!doctype html><html><body></body></html>',
+    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://example.test/' });
+  dom.window.eval(js);
+  await tick(dom.window);
+  const island = dom.window.document.createElement('div');
+  island.innerHTML = '<div class="ag" data-ag><ul data-ag-strip><li class="ag-frame"><button class="ag-open"><img src="a.webp"></button></li></ul></div>';
+  dom.window.document.body.append(island);
+  await tick(dom.window);
+  assert.ok(island.querySelector('img')!.hasAttribute('data-ag-wait'));
+});
+
+test('the large picture is held back and fades in once its file is set and loaded', async () => {
+  const g = await open();
+  g.click('[data-ag-open]', 1);
+  const photo = g.doc.querySelectorAll<HTMLImageElement>('.ag-photo')[1]!;
+  assert.equal(photo.getAttribute('src'), 'big-1.webp');
+  assert.ok(photo.hasAttribute('data-ag-wait'));
+  photo.dispatchEvent(new g.window.Event('load'));
+  assert.ok(!photo.hasAttribute('data-ag-wait'));
+  assert.ok(photo.hasAttribute('data-ag-in'));
+  // The slide that has no file yet is not held back: there is nothing to wait for.
+  assert.ok(!g.doc.querySelectorAll('.ag-photo')[3]!.hasAttribute('data-ag-wait'));
+});
+
+test('the flight stand-in is never faded, and a picture it still covers lands without one', async () => {
+  const g = await open();
+  g.click('[data-ag-open]', 0);
+  const photo = g.doc.querySelectorAll<HTMLImageElement>('.ag-photo')[0]!;
+  const ghost = g.doc.createElement('img');
+  ghost.className = 'ag-ghost';
+  ghost.src = 'thumb-0.webp';
+  g.doc.querySelector('.ag-slide')!.append(ghost);
+  await tick(g.window);
+  assert.ok(!ghost.hasAttribute('data-ag-wait'), 'the stand-in is not touched');
+  photo.dispatchEvent(new g.window.Event('load'));
+  assert.ok(!photo.hasAttribute('data-ag-in'), 'swapped at once, no fade underneath');
+});
