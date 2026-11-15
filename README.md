@@ -35,7 +35,7 @@ const images: GalleryImage[] = photos.map((p) => ({
 | `labels` | — | `open`, `prev`, `next`, `close` |
 | `sizes` | `22rem` | `sizes` of the images in the strip |
 | `loop` | `false` | endless: after the last image comes the first again |
-| `fly` | `false` | the clicked image grows out of the strip into the large view and flies back on closing |
+| `fly` | `true` | the clicked image grows out of the strip into the large view and flies back on closing; `fly={false}` turns it off |
 | `reveal` | `true` | the strip pictures settle in (rise and fade, one after the other) while the strip scrolls into view; `reveal={false}` turns it off |
 | `class` | — | extra class on `.ag` |
 
@@ -102,12 +102,13 @@ where there is no end, there is nothing to feel.
 
 ## Flying in
 
-With `fly` (since 1.3.0) the clicked image grows from its place in the strip
-into the large view; on closing it flies back — to the image where you
+With `fly` (since 1.3.0, default since 1.4.0) the clicked image grows from
+its place in the strip into the large view; on closing it flies back — to the image where you
 **stopped**, not the one you started with. If that image's thumbnail is
-currently outside the strip, it is brought into view first. **Not** the
-default: a site that already has the gallery should not find flying images
-after an update without asking for them.
+currently outside the strip, it is brought into view first. Since 1.4.0 this
+is the default; a gallery that should open without the journey says
+`fly={false}`. Sites on 1.3.x that want it pass `fly` explicitly — that stays
+correct after the update.
 
 What flies is not the large image but a **stand-in** (`.ag-ghost`) lying over
 the large view. The real image sits in a track that is measured and laid out

@@ -31,8 +31,9 @@ interface Props {
    *  is a nicety, with two it is a merry-go-round. */
   loop?: boolean;
   /** The clicked picture grows out of the strip into the enlarged view, and
-   *  goes back to its place on closing. Off by default: a site that has this
-   *  gallery already should not find its pictures flying after an update. */
+   *  goes back to its place on closing. On by default since 1.4.0: it only
+   *  moves a stand-in via transform and stays still for reduced motion.
+   *  `fly={false}` for a gallery that should open without the journey. */
   fly?: boolean;
   /** The pictures of the strip settle in (rise and fade, one after the other)
    *  while the strip scrolls into view. Pure CSS, bound to the scroll
@@ -42,7 +43,7 @@ interface Props {
   reveal?: boolean;
 }
 
-const { images, labels, sizes = '22rem', class: extra = '', loop = false, fly = false, reveal = true } = Astro.props;
+const { images, labels, sizes = '22rem', class: extra = '', loop = false, fly = true, reveal = true } = Astro.props;
 
 /** More than one gallery on a page is allowed, so nothing here is an id. */
 const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.open} ${i + 1}`;

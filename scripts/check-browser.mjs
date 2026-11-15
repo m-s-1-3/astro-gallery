@@ -71,7 +71,7 @@ for (const [name, viewport, coarse] of sizes) {
   if (revealOn) {
     is('the strip pictures settle in on scroll', await page.evaluate(() =>
       getComputedStyle(document.querySelector('.ag-frame')).animationName), 'ag-settle');
-    await page.evaluate(() => document.querySelector('.ag-strip').scrollIntoView({ block: 'center' }));
+    await page.evaluate(() => document.querySelector('.ag-strip').scrollIntoView({ block: 'center', behavior: 'instant' }));
     await wait(600);
     is('and are all fully there once in view', await page.evaluate(() =>
       [...document.querySelectorAll('.ag-frame')].slice(0, 2).every((f) => getComputedStyle(f).opacity === '1')), true);
@@ -156,7 +156,7 @@ for (const [name, viewport, coarse] of sizes) {
   await bare.setViewport({ width: 1440, height: 900 });
   await bare.setJavaScriptEnabled(false);
   await bare.goto(SITE, { waitUntil: 'networkidle2', timeout: 60000 });
-  await bare.evaluate(() => document.querySelector('.ag-strip').scrollIntoView({ block: 'center' }));
+  await bare.evaluate(() => document.querySelector('.ag-strip').scrollIntoView({ block: 'center', behavior: 'instant' }));
   await wait(600);
   is('the pictures are visible', await bare.evaluate(() =>
     [...document.querySelectorAll('.ag-open img')].every((im) =>

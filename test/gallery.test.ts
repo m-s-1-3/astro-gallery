@@ -265,6 +265,11 @@ test('where nothing can fly, `fly` opens and closes as before', async () => {
 
 const tick = (window: { setTimeout: typeof setTimeout }) => new Promise((r) => window.setTimeout(r, 20));
 
+test('`fly` is a prop, on by default, with `fly={false}` as the way out', () => {
+  assert.match(component, /fly = true/);
+  assert.match(template, /data-ag-fly=\{fly \? '' : undefined\}/);
+});
+
 test('`reveal` is a prop, on by default, and reaches the root as a hook', () => {
   assert.match(component, /reveal = true/);
   assert.match(template, /data-ag-reveal=\{reveal \? '' : undefined\}/);
