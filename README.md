@@ -34,7 +34,7 @@ const images: GalleryImage[] = photos.map((p) => ({
 | `images` | — | the images, `{thumb, full, alt, caption?, srcset?, width?, height?}` |
 | `labels` | — | `open`, `prev`, `next`, `close` |
 | `sizes` | `22rem` | `sizes` of the images in the strip |
-| `loop` | `false` | endless: after the last image comes the first again |
+| `loop` | `false` | endless: after the last image comes the first again, in the large view and (since 1.5.0) in the strip |
 | `fly` | `true` | the clicked image grows out of the strip into the large view and flies back on closing; `fly={false}` turns it off |
 | `reveal` | `true` | the strip pictures settle in (rise and fade, one after the other) while the strip scrolls into view; `reveal={false}` turns it off |
 | `class` | — | extra class on `.ag` |
@@ -74,6 +74,8 @@ Everything hangs on CSS variables on `.ag`:
 | `--ag-caption-bg` | `rgb(0 0 0 / .6)` | background behind the caption |
 | `--ag-fade` | `0.5s` | how long a picture takes to fade in once loaded (`0s` = off) |
 | `--ag-reveal-rise` | `1.25rem` | how far the strip pictures rise while settling in (`0px` = fade only) |
+| `--ag-edge` | `1.5rem` | how far the strip arrows stand in from the window edge; set it to the page's content edge |
+| `--ag-steps-align` | `flex-end` | which side the strip arrows stand on (`flex-end`, `center`, `flex-start`) |
 
 ```css
 .my-gallery { --ag-accent: #17a184; --ag-radius: 12px; }
@@ -99,6 +101,32 @@ other would leave the track stuck between two positions.
 When dragging past the end, the wrapped image is already in the preview,
 otherwise you would pull against a gap. And the resistance at the ends goes:
 where there is no end, there is nothing to feel.
+
+### The strip goes round too (since 1.5.0)
+
+With `loop` the strip has no end either — arrows, swipe and trackpad. The
+template renders the set three times; the copies before and after carry
+`data-ag-copy`, `aria-hidden` and `tabindex="-1"`, and their `data-ag-open` is
+the real index, so the large view opens on the right picture and counts
+right. A fresh strip starts with the first picture in the middle (the last
+one peeks in on the left: that is how one sees there is no end).
+
+The script keeps the middle of the view over the middle set. When the strip
+has come to rest (`scrollend`, else 140 ms without a scroll event, never
+under a finger) and the view has drifted into a copy, it moves by exactly one
+set: the same pictures in the same places, nothing visible. A fling that runs
+into the hard end is moved at once, with snapping off for that move — a
+mandatory snap pulled the position to the nearest point the instant it was
+set and the pictures jumped — and then eased onto the nearest picture.
+
+A set narrower than the strip cannot fill both sides: the copies are put away
+(`data-ag-short`) and the strip has ends as before. Reduced motion: the
+arrows move at once instead of gliding. There is no autoplay.
+
+**Arrows below the strip (since 1.5.0).** Beside the strip they stood at the
+window edge and over the pictures. They now stand in a row of their own under
+it, `--ag-edge` in from the edge and on the `--ag-steps-align` side. A site
+that used the old placement sets `--ag-edge` to its content edge.
 
 ## Flying in
 

@@ -375,3 +375,123 @@ test('the flight stand-in is never faded, and a picture it still covers lands wi
   photo.dispatchEvent(new g.window.Event('load'));
   assert.ok(!photo.hasAttribute('data-ag-in'), 'swapped at once, no fade underneath');
 });
+
+test('with the loop the strip is rendered three times, the copies out of reach and on the real index', () => {
+  assert.match(component, /const copies = loop && images\.length > 1 \? \[-1, 0, 1\] : \[0\]/);
+  assert.match(template, /data-ag-copy=\{copy \? String\(copy\) : undefined\}/);
+  assert.match(template, /aria-hidden=\{copy \? 'true' : undefined\}/);
+  assert.match(template, /tabindex=\{copy \? -1 : undefined\}/);
+  // The opener of every copy carries the picture's own index.
+  assert.match(template, /data-ag-open=\{i\}/);
+  assert.match(styles, /\.ag-strip\[data-ag-short\] \[data-ag-copy\] \{ display: none; \}/);
+});
+
+test('the strip arrows sit in their own row on the content edge, not over the pictures', () => {
+  assert.match(template, /<div class="ag-steps">[\s\S]*data-ag-step="-1"[\s\S]*data-ag-step="1"[\s\S]*<\/div>/);
+  assert.ok(template.indexOf('</ul>') < template.indexOf('class="ag-steps"'), 'the arrows come after the strip');
+  assert.match(styles, /--ag-edge:/);
+  assert.match(styles, /padding-inline: var\(--ag-edge\)/);
+  assert.doesNotMatch(styles, /grid-template-columns: auto minmax\(0, 1fr\) auto/);
+});
+
+/** An endless strip with a fake layout: four pictures 100 px apart, three
+ *  sets, a strip 250 px wide. jsdom has no layout, so the boxes are made up. */
+async function ring(count = 4, stripWidth = 250) {
+  const js = (await transform(source, { loader: 'ts' })).code;
+  const frames = [-1, 0, 1].flatMap((copy) => Array.from({ length: count }, (_, i) =>
+    `<li class="ag-frame" ${copy ? `data-ag-copy="${copy}" aria-hidden="true"` : ''}>`
+    + `<button class="ag-open" data-ag-open="${i}"><img src="thumb-${i}.webp" alt=""></button></li>`)).join('');
+  const slides = Array.from({ length: count }, (_, i) =>
+    `<div class="ag-slide"><img class="ag-photo" data-src="big-${i}.webp" alt="Bild ${i + 1}"></div>`).join('');
+  const dom = new JSDOM(
+    `<!doctype html><html><body><div class="ag" data-ag data-ag-loop>
+       <div class="ag-band"><ul class="ag-strip" data-ag-strip>${frames}</ul>
+         <div class="ag-steps"><button data-ag-step="-1">‹</button><button data-ag-step="1">›</button></div></div>
+       <div class="ag-big" data-ag-big aria-hidden="true"><button data-ag-close>✕</button>
+         <div class="ag-view" data-ag-view><div class="ag-track" data-ag-track>${slides}</div></div>
+         <p class="ag-count"><span data-ag-at>1</span> / <span>${count}</span></p></div>
+     </div></body></html>`,
+    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://example.test/' },
+  );
+  const { window } = dom;
+  const doc = window.document;
+  const strip = doc.querySelector<HTMLElement>('[data-ag-strip]')!;
+  let x = 0;
+  Object.defineProperty(strip, 'scrollLeft', { get: () => x, set: (v) => { x = v; } });
+  Object.defineProperty(strip, 'clientWidth', { get: () => stripWidth });
+  strip.scrollTo = ((o: ScrollToOptions) => { x = o.left ?? x; }) as typeof strip.scrollTo;
+  strip.scrollBy = ((o: ScrollToOptions) => { x += o.left ?? 0; }) as typeof strip.scrollBy;
+  const box = (left: number, width: number) => ({ left, width, right: left + width, top: 0, bottom: 100, height: 100, x: left, y: 0, toJSON() {} }) as DOMRect;
+  strip.getBoundingClientRect = () => box(0, stripWidth);
+  [...strip.querySelectorAll<HTMLElement>('.ag-frame')].forEach((f, k) => { f.getBoundingClientRect = () => box(k * 100 - x, 90); });
+  window.HTMLElement.prototype.setPointerCapture = () => {};
+  window.eval(js);
+  const scroll = () => strip.dispatchEvent(new window.Event('scroll'));
+  return { window, doc, strip, at: () => x, set: (v: number) => { x = v; scroll(); }, scroll };
+}
+
+test('an endless strip starts with the first picture of the middle set in the middle', async () => {
+  const r = await ring();
+  // middle set starts at 400; centred in 250: 400 - (250 - 90) / 2 = 320
+  assert.equal(r.at(), 320);
+  assert.ok(r.strip.hasAttribute('data-ag-ring'));
+});
+
+test('run into the last set, the strip is moved back by exactly one set', async () => {
+  const r = await ring();
+  r.set(1000); // 1000 + 250 > 2.85 * 400: at the hard end, recentred at once
+  assert.equal(r.at(), 600);
+  r.set(30); // into the first set, near the start
+  assert.equal(r.at(), 430);
+});
+
+test('at rest over the middle set, the strip stays where it is', async () => {
+  const r = await ring();
+  r.set(520); // view centre 645, over the middle set, on frame 6's middle
+  r.strip.dispatchEvent(new r.window.Event('scrollend'));
+  assert.equal(r.at(), 520);
+});
+
+test('in the middle of a set nothing moves until the strip has come to rest', async () => {
+  const r = await ring();
+  r.set(150); // view centre 275, over the first set, but not at the hard end
+  assert.equal(r.at(), 150);
+  r.strip.dispatchEvent(new r.window.Event('scrollend'));
+  assert.equal(r.at(), 550);
+});
+
+test('the arrows always find a picture on either side', async () => {
+  const r = await ring();
+  r.set(130);
+  r.doc.querySelector<HTMLElement>('[data-ag-step="-1"]')!.dispatchEvent(new r.window.MouseEvent('click', { bubbles: true }));
+  // recentred to 530 first, then one picture (90 + 16) back
+  assert.equal(r.at(), 530 - 106);
+});
+
+test('a copy opens the enlarged view on the real picture', async () => {
+  const r = await ring();
+  const copies = r.doc.querySelectorAll<HTMLElement>('[data-ag-copy] [data-ag-open="2"]');
+  assert.equal(copies.length, 2);
+  copies[1]!.dispatchEvent(new r.window.MouseEvent('click', { bubbles: true }));
+  assert.equal(r.doc.querySelector('[data-ag-at]')!.textContent, '3');
+});
+
+test('a set narrower than the strip has nowhere to go round: the copies are put away', async () => {
+  const r = await ring(2, 250); // one set is 200 px
+  assert.ok(r.strip.hasAttribute('data-ag-short'));
+});
+
+test('moved in motion, snapping is off until the strip has rested on a picture', async () => {
+  const r = await ring();
+  r.set(1000); // a fling into the hard end
+  assert.equal(r.at(), 600);
+  assert.ok(r.strip.hasAttribute('data-ag-loose'));
+  assert.equal(r.strip.style.scrollSnapType, 'none');
+  r.strip.dispatchEvent(new r.window.Event('scrollend'));
+  // eased onto the nearest picture: frame 7 (700 - 600 + 45 = 145) to the middle, 125
+  assert.equal(r.at(), 620);
+  assert.ok(r.strip.hasAttribute('data-ag-loose'), 'still loose while it glides');
+  r.strip.dispatchEvent(new r.window.Event('scrollend'));
+  assert.ok(!r.strip.hasAttribute('data-ag-loose'));
+  assert.equal(r.strip.style.scrollSnapType, '');
+});

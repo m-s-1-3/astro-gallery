@@ -27,8 +27,9 @@ interface Props {
   /** Put on the root, so a site can style its own gallery. */
   class?: string;
   /** Round and round: after the last picture comes the first again, and
-   *  before the first the last. Off by default — with six pictures the loop
-   *  is a nicety, with two it is a merry-go-round. */
+   *  before the first the last — in the enlarged view and, since 1.5.0, in
+   *  the strip too (arrows, swipe, trackpad). Off by default — with six
+   *  pictures the loop is a nicety, with two it is a merry-go-round. */
   loop?: boolean;
   /** The clicked picture grows out of the strip into the enlarged view, and
    *  goes back to its place on closing. On by default since 1.4.0: it only
@@ -47,24 +48,40 @@ const { images, labels, sizes = '22rem', class: extra = '', loop = false, fly = 
 
 /** More than one gallery on a page is allowed, so nothing here is an id. */
 const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.open} ${i + 1}`;
+
+/** The endless strip is the set three times over: a copy before and after the
+ *  real one, so there is always a picture on either side. The script keeps
+ *  the scroll position inside the middle set and, once the strip has come to
+ *  rest, moves it by exactly one set — the same pictures stand in the same
+ *  places, so nothing visible happens. The copies are rendered here, not by
+ *  script, for the same reason as the slides (see above). They are hidden from
+ *  screen readers and the tab order; `data-ag-open` keeps the REAL index, so
+ *  the enlarged view always opens on the right picture. */
+const copies = loop && images.length > 1 ? [-1, 0, 1] : [0];
 ---
 <div class:list={['ag', extra]} data-ag data-ag-loop={loop ? '' : undefined}
      data-ag-fly={fly ? '' : undefined} data-ag-reveal={reveal ? '' : undefined}>
   <div class="ag-band">
-    <button type="button" class="ag-step ag-step-prev" data-ag-step="-1" aria-label={labels.prev}>‹</button>
-
     <ul class="ag-strip" data-ag-strip>
-      {images.map((image, i) => (
-        <li class="ag-frame">
-          <button type="button" class="ag-open" data-ag-open={i} aria-label={labels.open}>
-            <img src={image.thumb} srcset={image.srcset} sizes={sizes} alt={words(image, i)}
+      {copies.map((copy) => images.map((image, i) => (
+        <li class="ag-frame" data-ag-copy={copy ? String(copy) : undefined}
+            aria-hidden={copy ? 'true' : undefined} style={`--ag-i: ${Math.min(i, 4)}`}>
+          <button type="button" class="ag-open" data-ag-open={i} aria-label={labels.open}
+            tabindex={copy ? -1 : undefined}>
+            <img src={image.thumb} srcset={image.srcset} sizes={sizes} alt={copy ? '' : words(image, i)}
               width={image.width} height={image.height} loading="lazy" decoding="async" />
           </button>
         </li>
-      ))}
+      )))}
     </ul>
 
-    <button type="button" class="ag-step ag-step-next" data-ag-step="1" aria-label={labels.next}>›</button>
+    {/* Below the strip, not beside it: beside it they stood at the window
+        edge and over the pictures. `--ag-edge` puts them on the page's
+        content edge. */}
+    <div class="ag-steps">
+      <button type="button" class="ag-step ag-step-prev" data-ag-step="-1" aria-label={labels.prev}>‹</button>
+      <button type="button" class="ag-step ag-step-next" data-ag-step="1" aria-label={labels.next}>›</button>
+    </div>
   </div>
 
   <div class="ag-big" data-ag-big aria-hidden="true">
@@ -137,13 +154,144 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
   const soften = (scope: ParentNode) => {
     for (const img of scope.querySelectorAll<HTMLImageElement>('.ag-open img, .ag-photo[src]')) softly(img);
   };
+  /** The endless strip (`loop`). The strip holds the set three times; this
+   *  keeps the scroll position in the middle one. The width of one set is
+   *  measured from the layout every time — pictures load, fonts arrive, the
+   *  window turns — and moving by exactly that width shows the same pictures
+   *  in the same places. A set narrower than the strip cannot fill both sides,
+   *  so the copies are put away (`data-ag-short`) and the strip has ends. */
+  const span = (strip: HTMLElement) => {
+    const lead = strip.querySelector<HTMLElement>('.ag-frame');
+    const first = strip.querySelector<HTMLElement>('.ag-frame:not([data-ag-copy])');
+    if (!lead || !first || lead === first) return 0;
+    return first.getBoundingClientRect().left - lead.getBoundingClientRect().left;
+  };
+  const endless = (strip: HTMLElement) =>
+    strip.closest('[data-ag]')?.hasAttribute('data-ag-loop') === true
+    && !!strip.querySelector('[data-ag-copy]') && !strip.hasAttribute('data-ag-short');
+  /** Back into the middle set. `instant`: a site may set smooth scrolling,
+   *  and this move has to be invisible.
+   *
+   *  At rest the strip stands on a snap point, and one set further is a snap
+   *  point too. In motion (a trackpad fling running into the end) it does
+   *  not, and a mandatory snap type pulled the position to the nearest point
+   *  the moment it was set — the pictures jumped. So in motion snapping is
+   *  switched off for the move (`data-ag-loose`) and only switched back on
+   *  once the strip has come to rest and been eased onto the nearest picture
+   *  (`align`). */
+  const recentre = (strip: HTMLElement, moving = false) => {
+    if (!endless(strip)) return;
+    const w = span(strip);
+    if (w <= 0) return;
+    if (w < strip.clientWidth) { strip.setAttribute('data-ag-short', ''); return; }
+    // The middle of the view stays over the middle set, so what is seen is
+    // nearly always the real pictures, and there is a set to either side.
+    const x = strip.scrollLeft, centre = x + strip.clientWidth / 2;
+    const to = centre < w ? x + w : centre > 2 * w ? x - w : x;
+    if (to === x) return;
+    if (moving) { strip.setAttribute('data-ag-loose', ''); strip.style.scrollSnapType = 'none'; }
+    strip.scrollTo({ left: to, behavior: 'instant' });
+  };
+  /** After a loose move: glide onto the picture nearest the middle, then
+   *  snapping is back on. Switched on off the point, the browser would snap
+   *  there in one jump. */
+  const align = (strip: HTMLElement) => {
+    const s = strip.getBoundingClientRect(), mid = s.left + s.width / 2;
+    let off = Infinity;
+    for (const f of strip.querySelectorAll<HTMLElement>('.ag-frame')) {
+      const r = f.getBoundingClientRect();
+      if (!r.width) continue; // a copy put away
+      const d = r.left + r.width / 2 - mid;
+      if (Math.abs(d) < Math.abs(off)) off = d;
+    }
+    if (!Number.isFinite(off) || Math.abs(off) < 1) {
+      strip.removeAttribute('data-ag-loose');
+      strip.style.scrollSnapType = '';
+      recentre(strip);
+      return;
+    }
+    strip.scrollTo({ left: strip.scrollLeft + off, behavior: calm() ? 'instant' : 'smooth' });
+    if (calm()) align(strip);
+  };
+  /** Strips scrolling right now: from the first scroll event to rest. */
+  const motion = new WeakSet<HTMLElement>();
+  /** The strip has come to rest. */
+  const rest = (strip: HTMLElement) => {
+    motion.delete(strip);
+    if (strip.hasAttribute('data-ag-loose')) align(strip); else recentre(strip);
+  };
+  /** Where a fresh strip starts: the first picture of the middle set in the
+   *  middle, the way the snap points stand. Retried until the strip has a
+   *  layout (a hidden strip measures zero). */
+  const begin = (strip: HTMLElement) => {
+    if (strip.hasAttribute('data-ag-ring') || !endless(strip)) return;
+    const w = span(strip);
+    if (w <= 0) return;
+    strip.setAttribute('data-ag-ring', '');
+    if (w < strip.clientWidth) { strip.setAttribute('data-ag-short', ''); return; }
+    const first = strip.querySelector<HTMLElement>('.ag-frame:not([data-ag-copy])')!;
+    const s = strip.getBoundingClientRect(), f = first.getBoundingClientRect();
+    strip.scrollTo({ left: strip.scrollLeft + f.left - s.left - (s.width - f.width) / 2, behavior: 'instant' });
+  };
+  const rings = (scope: ParentNode) => {
+    for (const strip of scope.querySelectorAll<HTMLElement>('[data-ag-loop] [data-ag-strip]')) begin(strip);
+  };
+  /** Recentred once the strip has come to rest, never under a finger: moving
+   *  the position in the middle of a touch breaks the gesture on iOS. Near a
+   *  hard end it is done at once — a long fling must not run out of strip. */
+  const resting = new WeakMap<HTMLElement, number>();
+  let touching = 0;
+  const later = (strip: HTMLElement) => {
+    window.clearTimeout(resting.get(strip));
+    resting.set(strip, window.setTimeout(() => { if (!touching) rest(strip); }, 140));
+  };
+  document.addEventListener('scroll', (e) => {
+    const strip = e.target instanceof HTMLElement && e.target.matches('[data-ag-strip]') ? e.target : null;
+    if (!strip || !endless(strip)) return;
+    begin(strip);
+    motion.add(strip);
+    const w = span(strip), x = strip.scrollLeft;
+    if (w > 0 && (x < w * 0.15 || x + strip.clientWidth > w * 2.85)) recentre(strip, true);
+    later(strip);
+  }, true);
+  document.addEventListener('scrollend', (e) => {
+    if (e.target instanceof HTMLElement && e.target.matches('[data-ag-strip]') && !touching) {
+      window.clearTimeout(resting.get(e.target));
+      rest(e.target);
+    }
+  }, true);
+  document.addEventListener('touchstart', (e) => {
+    if ((e.target as Element).closest?.('[data-ag-strip]')) touching++;
+  }, { passive: true, capture: true });
+  const untouch = (e: TouchEvent) => {
+    const strip = (e.target as Element).closest?.<HTMLElement>('[data-ag-strip]');
+    if (!strip) return;
+    touching = Math.max(0, touching - 1);
+    later(strip);
+  };
+  document.addEventListener('touchend', untouch, { passive: true, capture: true });
+  document.addEventListener('touchcancel', untouch, { passive: true, capture: true });
+  window.addEventListener('resize', () => {
+    for (const strip of document.querySelectorAll<HTMLElement>('[data-ag-loop] [data-ag-strip]')) {
+      strip.removeAttribute('data-ag-short');
+      if (strip.hasAttribute('data-ag-ring')) recentre(strip); else begin(strip);
+    }
+  });
+
   // The markup may arrive later (a `server:defer` island), so watch for it.
   const arrivals = () => {
     soften(document);
+    rings(document);
     if (typeof MutationObserver !== 'function') return;
     new MutationObserver((records) => {
       for (const r of records) for (const n of r.addedNodes) {
-        if (n instanceof Element) { if (n.matches('[data-ag], [data-ag] *') || n.querySelector('[data-ag]')) soften(n.closest('[data-ag]') ?? n); }
+        if (n instanceof Element) {
+          if (n.matches('[data-ag], [data-ag] *') || n.querySelector('[data-ag]')) {
+            const scope = n.closest('[data-ag]') ?? n;
+            soften(scope);
+            rings(scope.parentNode ?? scope);
+          }
+        }
       }
     }).observe(document.documentElement, { childList: true, subtree: true });
   };
@@ -427,12 +575,22 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
     move.finished.then(() => { if (flight === land) settle(); }, () => {});
   };
 
+  /** The thumbnail of picture `i` to fly back to. In an endless strip every
+   *  picture is there three times: the one nearest the middle of the strip. */
+  const nearest = (root: HTMLElement, i: number, strip: HTMLElement | null) => {
+    const all = [...root.querySelectorAll<HTMLImageElement>(`[data-ag-open="${i}"] img`)];
+    if (all.length < 2 || !strip) return all[0] ?? null;
+    const s = strip.getBoundingClientRect(), mid = s.left + s.width / 2;
+    const off = (img: HTMLImageElement) => { const r = img.getBoundingClientRect(); return Math.abs(r.left + r.width / 2 - mid); };
+    return all.reduce((a, b) => (off(b) < off(a) ? b : a));
+  };
+
   /** From the enlarged view back into the strip. Returns false when there is
    *  nowhere to fly to; `done` then has to be called by the caller. */
   const leave = (l: Live, done: () => void): boolean => {
     const photo = l.photos[l.index];
-    const thumb = l.root.querySelector<HTMLImageElement>(`[data-ag-open="${l.index}"] img`);
     const strip = l.root.querySelector<HTMLElement>('[data-ag-strip]');
+    const thumb = nearest(l.root, l.index, strip);
     if (!photo || !thumb || calm() || typeof photo.animate !== 'function') return false;
     const standIn = l.slides[l.index]!.querySelector<HTMLImageElement>('.ag-ghost');
     const shown = standIn ?? (loaded(photo) ? photo : null);
@@ -581,8 +739,12 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
       const strip = nudge.closest('[data-ag]')?.querySelector<HTMLElement>('[data-ag-strip]');
       const first = strip?.querySelector<HTMLElement>('.ag-frame');
       if (strip) {
+        // Room on both sides first, so an endless strip never meets an end.
+        // A click during a glide counts as motion.
+        begin(strip);
+        recentre(strip, motion.has(strip));
         const width = first ? first.getBoundingClientRect().width + 16 : 320;
-        strip.scrollBy({ left: (Number(nudge.dataset.agStep) || 1) * width, behavior: 'smooth' });
+        strip.scrollBy({ left: (Number(nudge.dataset.agStep) || 1) * width, behavior: calm() ? 'instant' : 'smooth' });
       }
       return;
     }
@@ -717,6 +879,11 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
        they settle in (`0px` = fade only). */
     --ag-fade: 0.5s;
     --ag-reveal-rise: 1.25rem;
+    /* The strip arrows: how far in from the window edge they stand (set it to
+       the page's content edge) and to which side (`flex-end`, `center`,
+       `flex-start`). */
+    --ag-edge: 1.5rem;
+    --ag-steps-align: flex-end;
   }
 
   .ag-band { position: relative; }
@@ -736,6 +903,8 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
   }
   .ag-strip::-webkit-scrollbar { display: none; }
   .ag-frame { flex: 0 0 auto; scroll-snap-align: center; }
+  /* Too few pictures to go round: the copies go, the strip has ends. */
+  .ag-strip[data-ag-short] [data-ag-copy] { display: none; }
   .ag-open {
     display: block;
     padding: 0;
@@ -754,15 +923,14 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
      be reported wrong, and was: in device emulation the page was laid out at
      desk width inside a phone-sized window, the media query did not match,
      and full-size arrows stood on a phone screen. */
-  .ag-step { display: none; }
+  .ag-steps { display: none; }
   @media (min-width: 60rem) and (pointer: fine) {
-    .ag-band {
-      display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto;
-      align-items: center;
-      gap: var(--ag-gap);
+    .ag-steps {
+      display: flex;
+      justify-content: var(--ag-steps-align);
+      gap: 0.75rem;
+      padding-inline: var(--ag-edge);
     }
-    .ag-strip { grid-column: 2; }
     .ag-step {
       display: grid;
       place-items: center;
@@ -930,7 +1098,9 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
       .ag[data-ag-reveal] { timeline-scope: --ag-in; }
       .ag[data-ag-reveal] .ag-strip { view-timeline: --ag-in block; }
       .ag[data-ag-reveal] .ag-frame {
-        --ag-i: 0;
+        /* `--ag-i` (0 to 4, the order of settling) is set on each frame by the
+           template, from the picture's own index — not nth-child, which in an
+           endless strip counts the copy in front. */
         /* Longhands on purpose: a minifier folds `animation` plus
            `animation-timeline` into one shorthand that browsers which know
            scroll timelines but not the shorthand slot then drop whole. */
@@ -940,10 +1110,6 @@ const words = (image: GalleryImage, i: number) => image.alt.trim() || `${labels.
         animation-timeline: --ag-in;
         animation-range: entry calc(var(--ag-i) * 6%) entry calc(50% + var(--ag-i) * 6%);
       }
-      .ag[data-ag-reveal] .ag-frame:nth-child(2) { --ag-i: 1; }
-      .ag[data-ag-reveal] .ag-frame:nth-child(3) { --ag-i: 2; }
-      .ag[data-ag-reveal] .ag-frame:nth-child(4) { --ag-i: 3; }
-      .ag[data-ag-reveal] .ag-frame:nth-child(n+5) { --ag-i: 4; }
     }
   }
 </style>
