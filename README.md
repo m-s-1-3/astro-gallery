@@ -113,7 +113,8 @@ one peeks in on the left: that is how one sees there is no end).
 
 The script keeps the middle of the view over the middle set. When the strip
 has come to rest (`scrollend`, else 140 ms without a scroll event, never
-under a finger) and the view has drifted into a copy, it moves by exactly one
+under a finger or while the mouse button is down on it — the click would be
+lost) and the view has drifted into a copy, it moves by exactly one
 set: the same pictures in the same places, nothing visible. A fling that runs
 into the hard end is moved at once, with snapping off for that move — a
 mandatory snap pulled the position to the nearest point the instant it was

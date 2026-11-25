@@ -241,21 +241,40 @@ const copies = loop && images.length > 1 ? [-1, 0, 1] : [0];
    *  hard end it is done at once — a long fling must not run out of strip. */
   const resting = new WeakMap<HTMLElement, number>();
   let touching = 0;
+  /** Nor while the mouse button is down on a strip. A click needs down and up
+   *  on the same element; one set further is the same picture in the same
+   *  place but another element, so the click was lost with nothing to see. */
+  let pressed: HTMLElement | null = null;
+  const busy = () => touching > 0 || pressed !== null;
   const later = (strip: HTMLElement) => {
     window.clearTimeout(resting.get(strip));
-    resting.set(strip, window.setTimeout(() => { if (!touching) rest(strip); }, 140));
+    resting.set(strip, window.setTimeout(() => { if (!busy()) rest(strip); }, 140));
   };
+  document.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch' || e.button !== 0) return; // fingers: `touching`
+    pressed = (e.target as Element).closest?.<HTMLElement>('[data-ag-strip]') ?? null;
+  }, true);
+  /** The rest timer, not at once: the click follows `pointerup`. */
+  const letGo = () => {
+    if (!pressed) return;
+    later(pressed);
+    pressed = null;
+  };
+  // A native drag ends in `pointercancel`; a context menu or another window
+  // can swallow the release altogether.
+  for (const type of ['pointerup', 'pointercancel', 'contextmenu']) document.addEventListener(type, letGo, true);
+  window.addEventListener('blur', letGo);
   document.addEventListener('scroll', (e) => {
     const strip = e.target instanceof HTMLElement && e.target.matches('[data-ag-strip]') ? e.target : null;
     if (!strip || !endless(strip)) return;
     begin(strip);
     motion.add(strip);
     const w = span(strip), x = strip.scrollLeft;
-    if (w > 0 && (x < w * 0.15 || x + strip.clientWidth > w * 2.85)) recentre(strip, true);
+    if (!pressed && w > 0 && (x < w * 0.15 || x + strip.clientWidth > w * 2.85)) recentre(strip, true);
     later(strip);
   }, true);
   document.addEventListener('scrollend', (e) => {
-    if (e.target instanceof HTMLElement && e.target.matches('[data-ag-strip]') && !touching) {
+    if (e.target instanceof HTMLElement && e.target.matches('[data-ag-strip]') && !busy()) {
       window.clearTimeout(resting.get(e.target));
       rest(e.target);
     }

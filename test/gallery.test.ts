@@ -495,3 +495,44 @@ test('moved in motion, snapping is off until the strip has rested on a picture',
   assert.ok(!r.strip.hasAttribute('data-ag-loose'));
   assert.equal(r.strip.style.scrollSnapType, '');
 });
+
+/* A click only happens if the button goes down and up on the SAME element.
+ * Moving an endless strip by one set shows the same picture in the same
+ * place, but it is another element: moved while the button is down, nothing
+ * opens. */
+const pointer = (r: Awaited<ReturnType<typeof ring>>, target: EventTarget, type: string) =>
+  target.dispatchEvent(new r.window.MouseEvent(type, { bubbles: true, button: 0 }));
+const settled = () => new Promise((resolve) => setTimeout(resolve, 200));
+
+test('a strip is not moved while the mouse button is down on it', async () => {
+  const r = await ring();
+  r.set(150); // over the first set: due to be recentred once at rest
+  pointer(r, r.strip.querySelector('[data-ag-copy] .ag-open')!, 'pointerdown');
+  r.strip.dispatchEvent(new r.window.Event('scrollend'));
+  await settled();
+  assert.equal(r.at(), 150, 'neither scrollend nor the rest timer moves it');
+  pointer(r, r.doc, 'pointerup');
+  assert.equal(r.at(), 150, 'not before the click has been delivered');
+  await settled();
+  assert.equal(r.at(), 550, 'recentred after letting go');
+});
+
+test('nor at the hard end, and a cancelled press lets go too', async () => {
+  const r = await ring();
+  pointer(r, r.strip.querySelector('.ag-open')!, 'pointerdown');
+  r.set(1000);
+  assert.equal(r.at(), 1000);
+  pointer(r, r.doc, 'pointercancel');
+  await settled();
+  assert.equal(r.at(), 600);
+});
+
+test('a press elsewhere or with another button does not hold the strip', async () => {
+  const r = await ring();
+  pointer(r, r.doc.querySelector('[data-ag-step="1"]')!, 'pointerdown');
+  r.strip.querySelector('.ag-open')!.dispatchEvent(
+    new r.window.MouseEvent('pointerdown', { bubbles: true, button: 2 }));
+  r.set(150);
+  r.strip.dispatchEvent(new r.window.Event('scrollend'));
+  assert.equal(r.at(), 550);
+});
