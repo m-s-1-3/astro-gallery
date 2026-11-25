@@ -20,10 +20,10 @@
     "astro": ">=4"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0",
-    "jsdom": "^27.0.0",
-    "puppeteer-core": "^24.0.0",
-    "tsx": "^4.20.6",
+    "esbuild": "^0.28.2",
+    "jsdom": "^31.0.1",
+    "puppeteer-core": "^25.19.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.0"
   },
   "repository": {
