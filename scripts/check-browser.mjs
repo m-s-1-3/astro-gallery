@@ -10,8 +10,7 @@
  *  picture. So this one drives Chrome, at a phone size and a desk size, and
  *  measures.
  *
- *    docker compose -f docker-compose.dev.yml --profile media up -d
- *    npx puppeteer-core … — or simply: node scripts/check-gallery.mjs
+ *    SITE=http://127.0.0.1:4321/gallery/ npm run check:browser
  *
  *  Set CHROME to another binary, SITE to another address.
  */
@@ -40,6 +39,28 @@ const is = (what, got, want) => {
 };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** A real pointer on the part of an opener that is on screen — no
+ *  scroll-into-view. `page.click` scrolls the strip itself, and in an endless
+ *  strip that runs a copy into the end, where it is rightly moved away from
+ *  under the pointer. Null when none of the matches can be seen. */
+const onScreen = (page, selector) => page.evaluate((sel) => {
+  for (const el of document.querySelectorAll(sel)) {
+    const r = el.getBoundingClientRect();
+    const left = Math.max(r.left, 0), right = Math.min(r.right, innerWidth);
+    const top = Math.max(r.top, 0), bottom = Math.min(r.bottom, innerHeight);
+    if (right - left < 30 || bottom - top < 30) continue;
+    const x = (left + right) / 2, y = (top + bottom) / 2;
+    if (el.contains(document.elementFromPoint(x, y))) return { x, y, at: Number(el.dataset.agOpen) + 1 };
+  }
+  return null;
+}, selector);
+
+/** Where the strip stands in the window: what a visitor sees of the page. */
+const stripTop = (page) => page.evaluate(() =>
+  Math.round(document.querySelector('.ag-strip').getBoundingClientRect().top));
+const isOpen = (page) => page.evaluate(() =>
+  document.querySelector('[data-ag-big]').classList.contains('is-open'));
+
 const browser = await puppeteer.launch({
   executablePath: CHROME, headless: true, timeout: 120000, protocolTimeout: 180000,
   args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
@@ -55,11 +76,20 @@ for (const [name, viewport, coarse] of sizes) {
 
   const page_ = await page.evaluate(() => ({
     coarse: matchMedia('(pointer: coarse)').matches,
-    strip: getComputedStyle(document.querySelector('.ag-step')).display,
     viewport: document.querySelector('meta[name=viewport]').content,
   }));
   is('the pointer is read right', page_.coarse, coarse);
-  is('strip arrows', page_.strip, (!coarse && viewport.width >= 960) ? 'grid' : 'none');
+  // Since 1.5.0 the arrows have a row of their own below the strip, and it is
+  // the row that is hidden — so ask what is rendered, not for one `display`.
+  const wanted = !coarse && viewport.width >= 960;
+  is('strip arrows are shown', await page.evaluate(() =>
+    [...document.querySelectorAll('.ag-step')].every((b) => b.checkVisibility())), wanted);
+  if (wanted) {
+    is('and stand below the strip', await page.evaluate(() => {
+      const strip = document.querySelector('.ag-strip').getBoundingClientRect();
+      return [...document.querySelectorAll('.ag-step')].every((b) => b.getBoundingClientRect().top >= strip.bottom - 1);
+    }), true);
+  }
   // A locked scale made Chrome lay the page out at desk width inside a
   // phone-sized window. It must not come back.
   is('the viewport scale is not locked', /maximum-scale|user-scalable/.test(page_.viewport), false);
@@ -84,56 +114,90 @@ for (const [name, viewport, coarse] of sizes) {
     [...document.querySelectorAll('.ag-open img')].filter((im) => im.complete)
       .every((im) => getComputedStyle(im).opacity === '1')), true);
 
-  await page.click('[data-ag-open]');
+  // Partway down before opening, so that a page pinned or given back at the
+  // top shows. The position comes from this page: the strip near the upper
+  // edge, at least 100 px down, never further than the page goes.
+  await page.evaluate(() => {
+    const top = document.querySelector('.ag-strip').getBoundingClientRect().top + scrollY;
+    scrollTo({ top: Math.max(top - 20, 100), behavior: 'instant' });
+  });
+  await wait(600);
+  const before = await page.evaluate(() => window.scrollY);
+  const seen = await stripTop(page);
+  is('the page is scrolled before opening', before > 0, true);
+
+  const picture = await onScreen(page, '.ag-frame:not([data-ag-copy]) [data-ag-open]');
+  if (!picture) throw new Error('no picture of the strip is on screen');
+  await page.mouse.click(picture.x, picture.y);
   await wait(900);
 
-  // Where the page was pinned. The script writes it into the body, so the
-  // check does not have to guess.
-  const held = await page.evaluate(() => -parseInt(document.body.style.top || '0', 10));
-  is('opens', await page.evaluate(() => document.querySelector('[data-ag-big]').classList.contains('is-open')), true);
+  // Where the page was pinned. The script writes it into the body.
+  const held = await page.evaluate(() => -parseFloat(document.body.style.top || '0'));
+  is('opens', await isOpen(page), true);
+  is('on the picture clicked', await page.evaluate(() => document.querySelector('[data-ag-at]').textContent), picture.at);
   is('the page is pinned', await page.evaluate(() => getComputedStyle(document.body).position), 'fixed');
-  is('pinned partway down, not at the top', held > 100, true);
+  is('pinned where it stood', Math.abs(held - before) < 2, true);
+  is('and nothing behind has moved', Math.abs(await stripTop(page) - seen) < 2, true);
   // The fault that shipped: slides no stylesheet reached, so no picture.
   // Where there is a finger, swiping leads and the buttons are in the way.
   is('lightbox arrows', await page.evaluate(() => getComputedStyle(document.querySelector('.ag-prev')).display),
     coarse ? 'none' : 'grid');
-  is('the picture is laid out and loaded', await page.evaluate(() => {
-    const im = document.querySelectorAll('.ag-photo')[0];
+  is('the picture is laid out and loaded', await page.evaluate((i) => {
+    const im = document.querySelectorAll('.ag-photo')[i];
     const r = im.getBoundingClientRect();
     return r.width > 100 && r.height > 100 && im.complete && im.naturalWidth > 0;
-  }), true);
+  }, picture.at - 1), true);
 
-  is('the large picture is fully shown after its fade', await page.evaluate(() => {
-    const im = document.querySelectorAll('.ag-photo')[0];
+  is('the large picture is fully shown after its fade', await page.evaluate((i) => {
+    const im = document.querySelectorAll('.ag-photo')[i];
     return !im.hasAttribute('data-ag-wait') && getComputedStyle(im).opacity === '1';
-  }), true);
+  }, picture.at - 1), true);
 
   await page.mouse.move(viewport.width / 2, viewport.height / 2);
   await page.mouse.wheel({ deltaY: 1200 }).catch(() => {});
   await wait(400);
   is('the wheel moves nothing', await page.evaluate(() => window.scrollY), 0);
   is('and does not shift the hold',
-    await page.evaluate(() => -parseInt(document.body.style.top || '0', 10)), held);
+    await page.evaluate(() => -parseFloat(document.body.style.top || '0')), held);
+  is('nor what is behind the picture', Math.abs(await stripTop(page) - seen) < 2, true);
 
+  const next = picture.at % await page.evaluate(() => document.querySelectorAll('.ag-photo').length) + 1;
   await page.keyboard.press('ArrowRight');
   await wait(400);
-  is('the arrow key leafs on', await page.evaluate(() => document.querySelector('[data-ag-at]').textContent), '2');
-  is('and the next picture is there', await page.evaluate(() => {
-    const im = document.querySelectorAll('.ag-photo')[1];
+  is('the arrow key leafs on', await page.evaluate(() => document.querySelector('[data-ag-at]').textContent), next);
+  is('and the next picture is there', await page.evaluate((i) => {
+    const im = document.querySelectorAll('.ag-photo')[i];
     return im.complete && im.naturalWidth > 0 && im.getBoundingClientRect().width > 100;
-  }), true);
+  }, next - 1), true);
 
   await page.keyboard.press('Escape');
   await wait(600);
   is('escape closes', await page.evaluate(() => document.querySelector('[data-ag-big]').classList.contains('is-open')), false);
   is('the page is free again', await page.evaluate(() => getComputedStyle(document.body).position), 'static');
-  is('and back where it was', Math.abs(await page.evaluate(() => window.scrollY) - held) < 4, true);
+  is('and back where it was', Math.abs(await page.evaluate(() => window.scrollY) - before) < 4, true);
 
   await page.mouse.wheel({ deltaY: 400 });
   await wait(300);
   is('it scrolls again afterwards', await page.evaluate(() => window.scrollY) > held, true);
   is('no scrollbars', await page.evaluate(() =>
     getComputedStyle(document.documentElement).scrollbarWidth), 'none');
+
+  // An endless strip: the copies that peek in are pictures like any other to
+  // whoever sees them, and have to open the one they show.
+  await page.goto(SITE, { waitUntil: 'networkidle2', timeout: 60000 });
+  await wait(800);
+  if (await page.evaluate(() => !!document.querySelector('[data-ag-loop] .ag-strip:not([data-ag-short]) [data-ag-copy]'))) {
+    await page.evaluate(() => document.querySelector('.ag-strip').scrollIntoView({ block: 'center', behavior: 'instant' }));
+    await wait(600);
+    const copy = await onScreen(page, '[data-ag-copy] .ag-open');
+    is('a copy is on screen', !!copy, true);
+    if (copy) {
+      await page.mouse.click(copy.x, copy.y);
+      await wait(900);
+      is('clicking it opens the large view', await isOpen(page), true);
+      is('on the picture it shows', await page.evaluate(() => document.querySelector('[data-ag-at]').textContent), copy.at);
+    }
+  }
 
   await page.close();
 }
